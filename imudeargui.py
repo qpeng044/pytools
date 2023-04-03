@@ -1,10 +1,11 @@
 import serial
 import serial.tools.list_ports
-from dearpygui import core,simple
+import dearpygui.dearpygui as dpg
 from multiprocessing import Process,Queue,Value
 import numpy as np
 import os
 import time
+
 # def imudecode(self):
 #         while(True):
 #             if(self.qdata.empty()):
@@ -13,7 +14,7 @@ import time
 #             tempdatalist=tempdatastr.split(' ')
 #             if len(tempdatalist)<8:
 #                 continue
-#             core.log_info(tempdatalist)
+#             print(tempdatalist)
             
 #             self.imudata['dx'].append(int(tempdatalist[1])/self.BMA2x2_ACCELEROMETER_SENSITIVITY_AT_2G*self.g)
 #             self.imudata['dy'].append(int(tempdatalist[2])/self.BMA2x2_ACCELEROMETER_SENSITIVITY_AT_2G*self.g)
@@ -69,9 +70,9 @@ class App():
         for p in ports:
             self.com_list.append(p.device)
 
-        core.log_info(self.com_list)
+        print(self.com_list)
     def multpro_serial_getdata(self,com,que):
-        core.log_info(f'sub pid is {os.getpid()}')
+        print(f'sub pid is {os.getpid()}')
         ser=serial.Serial(com,115200,timeout=100)
         ser.flushInput()
         ser.flushOutput()
@@ -92,7 +93,7 @@ class App():
                 fid.write('\n')
     def start_get_data(self,sender,data):
         self.stop_flag.value=0
-        core.log_info(f'main pid is {os.getpid()}')
+        print(f'main pid is {os.getpid()}')
         argss=(core.get_value("com"),self.qdata)
         p1=Process(target=self.multpro_serial_getdata,args=argss)
         p2=Process(target=self.save_imudata,args=(self.saveque,))
@@ -107,16 +108,16 @@ class App():
         # p3.start()
     
     def plotdata(self,sender,data):
-        # core.log_info(f'come in plotdata q is {self.qdata.empty()}')
+        # print(f'come in plotdata q is {self.qdata.empty()}')
         while(True):
             if(self.qdata.empty()):
                 break
             tempdatastr=self.qdata.get()
-            core.log_info(f'tempdatastr is {tempdatastr}')
+            print(f'tempdatastr is {tempdatastr}')
             tempdatalist=tempdatastr.split(' ')
             if len(tempdatalist)<8:
                 continue
-            core.log_info(tempdatalist)
+            print(tempdatalist)
             
             self.imudata['dx'].append(int(tempdatalist[1])/self.BMA2x2_ACCELEROMETER_SENSITIVITY_AT_2G*self.g)
             self.imudata['dy'].append(int(tempdatalist[2])/self.BMA2x2_ACCELEROMETER_SENSITIVITY_AT_2G*self.g)
