@@ -7,11 +7,11 @@ class GUI():
     log_info = ''
     file = ''
     plot_data = []
-    plot_fig_num = 1
+    plot_fig_num = 0
     pattern_history = []
     pattern_history_file = "./pattern_history_file.txt"
     multi_plot_mode = 0
-    serial_num = 1
+    serial_num = 0
     sub_serial = []
 
     def __init__(self) -> None:
@@ -40,34 +40,37 @@ class GUI():
                 dpg.add_text("select log file to plot")
                 dpg.add_button(label="select file",
                                callback=lambda: dpg.show_item("file_dialog_id"))
+                dpg.add_text(":")
+                dpg.add_text(tag="file_name")
             with dpg.group(horizontal=True, tag="input_patten_and_history"):
                 dpg.add_text("input patten:")
                 dpg.add_input_text(tag="input_string", width=400)
                 dpg.add_combo(items=self.pattern_history,
                               tag="pattern_history", callback=self.select_pattern)
             with dpg.group(horizontal=True):
-                dpg.add_button(
-                    label=f"plot{self.plot_fig_num}", callback=self.plot_callback, tag=f"plot_callback{self.plot_fig_num}")
+                # dpg.add_button(
+                #     label=f"plot{self.plot_fig_num}", callback=self.plot_callback, tag=f"plot_callback{self.plot_fig_num}")
                 dpg.add_button(
                     label=f"+", callback=self.add_plot_callback, tag="add_plot")
                 dpg.add_button(label=f"-", callback=self.delete_plot_callback)
                 dpg.add_button(label=f"open multi-plot",
                                callback=self.multi_plot_callback, tag="multi_plot")
-            with dpg.plot(label=f"figure{self.plot_fig_num}", width=-1, tag=f"plot{self.plot_fig_num}"):
-                # optionally create legend
-                dpg.add_plot_legend()
+            self.add_plot_callback(None, None)
+            # with dpg.plot(label=f"figure{self.plot_fig_num}", width=-1, tag=f"plot{self.plot_fig_num}"):
+            #     # optionally create legend
+            #     dpg.add_plot_legend()
 
-                # REQUIRED: create x and y axes
-                dpg.add_plot_axis(dpg.mvXAxis, label="x",
-                                  tag=f"x_axis{self.plot_fig_num}")
-                dpg.add_plot_axis(dpg.mvYAxis, label="y",
-                                  tag=f"y_axis{self.plot_fig_num}")
+            #     # REQUIRED: create x and y axes
+            #     dpg.add_plot_axis(dpg.mvXAxis, label="x",
+            #                       tag=f"x_axis{self.plot_fig_num}")
+            #     dpg.add_plot_axis(dpg.mvYAxis, label="y",
+            #                       tag=f"y_axis{self.plot_fig_num}")
 
-                # series belong to a y axis
-                series_tag = f"series_tag{self.plot_fig_num}_{self.serial_num}"
-                dpg.add_line_series(list(range(len(
-                    self.plot_data))), self.plot_data, label="", parent=f"y_axis{self.plot_fig_num}", tag=series_tag)
-                self.sub_serial.append([series_tag])
+            #     # series belong to a y axis
+            #     series_tag = f"series_tag{self.plot_fig_num}_{self.serial_num}"
+            #     dpg.add_line_series(list(range(len(
+            #         self.plot_data))), self.plot_data, label="", parent=f"y_axis{self.plot_fig_num}", tag=series_tag)
+            #     self.sub_serial.append([series_tag])
             dpg.add_text("logger:", tag="log_header")
             dpg.add_text('', tag='log_text')
 
@@ -89,8 +92,6 @@ class GUI():
             dpg.set_value("input_string", dpg.get_value("pattern_history"))
 
     def add_plot_callback(self, sender, app_data):
-        self.plot_fig_num += 1
-        self.serial_num += 1
         self.plot_data = []
         dpg.add_button(
             label=f"plot{self.plot_fig_num}", callback=self.plot_callback, tag=f"plot_callback{self.plot_fig_num}", before="add_plot")
@@ -109,6 +110,8 @@ class GUI():
             dpg.add_line_series(list(range(len(
                 self.plot_data))), self.plot_data, label="", parent=f"y_axis{self.plot_fig_num}", tag=series_tag)
             self.sub_serial.append([series_tag])
+        self.plot_fig_num += 1
+        self.serial_num += 1
 
     def delete_plot_callback(self, sender, app_data):
         pass
@@ -120,10 +123,11 @@ class GUI():
         self.log_info += (self.file+' process done.\n')
 
         dpg.set_value('log_text', self.log_info)
+        dpg.set_value("file_name", self.file)
 
     def plot_callback(self, sender, app_data):
-        print("Sender: ", sender)
-        print("App Data: ", app_data)
+        # print("Sender: ", sender)
+        # print("App Data: ", app_data)
         pattern = dpg.get_value("input_string")
         if not (pattern) in self.pattern_history:
             self.pattern_history.append(pattern)
@@ -137,7 +141,8 @@ class GUI():
             print("no file selected")
             return
         decimal_regex = r'(?<=\b{})\d+\.\d+'.format(pattern)
-        print(decimal_regex)
+        # print(decimal_regex)
+        plot_figure_num = int(sender[-1])
         with open(self.file, 'r') as fid:
             line = fid.readline()
             while(line):
@@ -146,14 +151,24 @@ class GUI():
                     self.plot_data.append(float(matches[0]))
                 line = fid.readline()
         if self.multi_plot_mode == 0:
+            if(len(self.sub_serial[plot_figure_num]) != 1):
+                for index in range(1, len(self.sub_serial[plot_figure_num])):
+                    dpg.delete_item(self.sub_serial[plot_figure_num][index])
+                self.sub_serial[plot_figure_num] = [
+                    self.sub_serial[plot_figure_num][0]]
             dpg.set_value(
-                f'series_tag{sender[-1]}_1', [list(range(len(self.plot_data))), self.plot_data])
-            dpg.set_item_label(f'series_tag{sender[-1]}', pattern)
+                self.sub_serial[plot_figure_num][0], [list(range(len(self.plot_data))), self.plot_data])
+            dpg.set_item_label(self.sub_serial[plot_figure_num][0], pattern)
             # dpg.set_axis_limits("y_axis", 0, max(self.plot_data))
             # dpg.set_axis_limits("x_axis", 0, len(self.plot_data))
         else:
-            dpg.plot
-            self.sub_serial[int(sender[-1])].append()
+
+            new_series_tag = f"series_tag{plot_figure_num}_{self.serial_num}"
+            dpg.add_line_series(list(range(len(
+                self.plot_data))), self.plot_data, label="", parent=f"y_axis{plot_figure_num}", tag=new_series_tag)
+            dpg.set_item_label(new_series_tag, pattern)
+            self.sub_serial[plot_figure_num].append(new_series_tag)
+            self.serial_num += 1
 
 
 app = GUI()
