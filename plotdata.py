@@ -48,29 +48,12 @@ class GUI():
                 dpg.add_combo(items=self.pattern_history,
                               tag="pattern_history", callback=self.select_pattern)
             with dpg.group(horizontal=True):
-                # dpg.add_button(
-                #     label=f"plot{self.plot_fig_num}", callback=self.plot_callback, tag=f"plot_callback{self.plot_fig_num}")
                 dpg.add_button(
                     label=f"+", callback=self.add_plot_callback, tag="add_plot")
                 dpg.add_button(label=f"-", callback=self.delete_plot_callback)
                 dpg.add_button(label=f"open multi-plot",
                                callback=self.multi_plot_callback, tag="multi_plot")
             self.add_plot_callback(None, None)
-            # with dpg.plot(label=f"figure{self.plot_fig_num}", width=-1, tag=f"plot{self.plot_fig_num}"):
-            #     # optionally create legend
-            #     dpg.add_plot_legend()
-
-            #     # REQUIRED: create x and y axes
-            #     dpg.add_plot_axis(dpg.mvXAxis, label="x",
-            #                       tag=f"x_axis{self.plot_fig_num}")
-            #     dpg.add_plot_axis(dpg.mvYAxis, label="y",
-            #                       tag=f"y_axis{self.plot_fig_num}")
-
-            #     # series belong to a y axis
-            #     series_tag = f"series_tag{self.plot_fig_num}_{self.serial_num}"
-            #     dpg.add_line_series(list(range(len(
-            #         self.plot_data))), self.plot_data, label="", parent=f"y_axis{self.plot_fig_num}", tag=series_tag)
-            #     self.sub_serial.append([series_tag])
             dpg.add_text("logger:", tag="log_header")
             dpg.add_text('', tag='log_text')
 
