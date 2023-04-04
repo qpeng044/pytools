@@ -104,9 +104,9 @@ class GUI():
         dpg.set_value('log_text', self.log_info)
 
     def callback(self, sender, app_data):
-        # print("Sender: ", sender)
-        # print("App Data: ", app_data)
-        self.file = list(app_data['selections'].keys())[0]
+        print("Sender: ", sender)
+        print("App Data: ", app_data)
+        self.file = list(app_data['selections'].values())[0]
         self.add_log('open file:'+self.file+' process done')
         dpg.set_value("file_name", self.file)
 
