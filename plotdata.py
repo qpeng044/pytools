@@ -162,4 +162,5 @@ class GUI():
             self.add_log("add new line series " + new_series_tag)
 
 
-app = GUI()
+if __name__ == "__main__":
+    app = GUI()
