@@ -116,13 +116,15 @@ class GUI():
     def delete_plot_callback(self, sender, app_data):
         pass
 
-    def callback(self, sender, app_data):
-        print("Sender: ", sender)
-        print("App Data: ", app_data)
-        self.file = list(app_data['selections'].keys())[0]
-        self.log_info += (self.file+' process done.\n')
-
+    def add_log(self, log_str, sender=None, app_data=None):
+        self.log_info += (log_str+'\n')
         dpg.set_value('log_text', self.log_info)
+
+    def callback(self, sender, app_data):
+        # print("Sender: ", sender)
+        # print("App Data: ", app_data)
+        self.file = list(app_data['selections'].keys())[0]
+        self.add_log('open file:'+self.file+' process done')
         dpg.set_value("file_name", self.file)
 
     def plot_callback(self, sender, app_data):
@@ -150,15 +152,20 @@ class GUI():
                 if(len(matches) != 0):
                     self.plot_data.append(float(matches[0]))
                 line = fid.readline()
+        self.add_log("extract data from "+self.file)
         if self.multi_plot_mode == 0:
             if(len(self.sub_serial[plot_figure_num]) != 1):
                 for index in range(1, len(self.sub_serial[plot_figure_num])):
                     dpg.delete_item(self.sub_serial[plot_figure_num][index])
+                    self.add_log('delete line series :' +
+                                 self.sub_serial[plot_figure_num][index])
                 self.sub_serial[plot_figure_num] = [
                     self.sub_serial[plot_figure_num][0]]
             dpg.set_value(
                 self.sub_serial[plot_figure_num][0], [list(range(len(self.plot_data))), self.plot_data])
             dpg.set_item_label(self.sub_serial[plot_figure_num][0], pattern)
+            self.add_log('update line series :' +
+                         self.sub_serial[plot_figure_num][0])
             # dpg.set_axis_limits("y_axis", 0, max(self.plot_data))
             # dpg.set_axis_limits("x_axis", 0, len(self.plot_data))
         else:
@@ -169,6 +176,7 @@ class GUI():
             dpg.set_item_label(new_series_tag, pattern)
             self.sub_serial[plot_figure_num].append(new_series_tag)
             self.serial_num += 1
+            self.add_log("add new line series " + new_series_tag)
 
 
 app = GUI()
