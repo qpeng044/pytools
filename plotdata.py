@@ -2,6 +2,13 @@ import re
 import dearpygui.dearpygui as dpg
 import os
 
+gui_label_ch = ["选择文件", "打开", "查找字符", "画图", "打开多图模式", "关闭多图模式"]
+gui_label_en = ["SelectFile", "Open", "InputPatten",
+                "plot", "OpenMultiPlot", "CloseMultiPlot"]
+
+gui_label_key = ["select_data", "open_file", "input_patten",
+                 "plot", "open_multplot", "close_multplot"]
+
 
 class GUI():
     log_info = ''
@@ -13,8 +20,10 @@ class GUI():
     multi_plot_mode = 0
     serial_num = 0
     sub_serial = []
+    gui_label = None
 
     def __init__(self) -> None:
+        self.gui_label = dict(zip(gui_label_key, gui_label_ch))
         if(os.path.exists(self.pattern_history_file)):
             with open(self.pattern_history_file, 'r') as fid:
                 line = fid.readline()
@@ -25,6 +34,10 @@ class GUI():
         dpg.create_context()
         dpg.create_viewport(width=600, height=400)
         dpg.setup_dearpygui()
+        with dpg.font_registry():
+            with dpg.font(r"ZiTiGuanJiaFangSongTi-2.ttf", 20) as default_font:
+                dpg.add_font_range_hint(dpg.mvFontRangeHint_Chinese_Full)
+        dpg.bind_font(default_font)  # Binds the font globally
         with dpg.window(tag="Primary Window"):
             # dpg.show_imgui_demo()
             with dpg.file_dialog(directory_selector=False, show=False, callback=self.callback, id="file_dialog_id", width=400, height=300):
@@ -37,13 +50,13 @@ class GUI():
                 dpg.add_file_extension(".py", color=(
                     0, 255, 0, 255), custom_text="[Python]")
             with dpg.group(horizontal=True):
-                dpg.add_text("select log file to plot")
-                dpg.add_button(label="select file",
+                dpg.add_text(self.gui_label["select_data"])
+                dpg.add_button(label=self.gui_label["open_file"],
                                callback=lambda: dpg.show_item("file_dialog_id"))
                 dpg.add_text(":")
                 dpg.add_text(tag="file_name")
             with dpg.group(horizontal=True, tag="input_patten_and_history"):
-                dpg.add_text("input patten:")
+                dpg.add_text(self.gui_label["input_patten"])
                 dpg.add_input_text(tag="input_string", width=400)
                 dpg.add_combo(items=self.pattern_history,
                               tag="pattern_history", callback=self.select_pattern)
@@ -51,7 +64,7 @@ class GUI():
                 dpg.add_button(
                     label=f"+", callback=self.add_plot_callback, tag="add_plot")
                 dpg.add_button(label=f"-", callback=self.delete_plot_callback)
-                dpg.add_button(label=f"open multi-plot",
+                dpg.add_button(label=self.gui_label["open_multplot"],
                                callback=self.multi_plot_callback, tag="multi_plot")
             self.add_plot_callback(None, None)
             dpg.add_text("logger:", tag="log_header")
@@ -65,10 +78,10 @@ class GUI():
     def multi_plot_callback(self, sender, app_data):
         if self.multi_plot_mode:
             self.multi_plot_mode = 0
-            dpg.set_item_label("multi_plot", "open multi-plot")
+            dpg.set_item_label("multi_plot", self.gui_label["open_multplot"])
         else:
             self.multi_plot_mode = 1
-            dpg.set_item_label("multi_plot", "close multi-plot")
+            dpg.set_item_label("multi_plot", self.gui_label["close_multplot"])
 
     def select_pattern(self, sender, app_data):
         if dpg.get_value("pattern_history") != "history":
@@ -77,8 +90,8 @@ class GUI():
     def add_plot_callback(self, sender, app_data):
         self.plot_data = []
         dpg.add_button(
-            label=f"plot{self.plot_fig_num}", callback=self.plot_callback, tag=f"plot_callback{self.plot_fig_num}", before="add_plot")
-        with dpg.plot(label=f"figure{self.plot_fig_num}", width=-1, tag=f"plot{self.plot_fig_num}", before="log_header"):
+            label=f'{self.gui_label["plot"]}{self.plot_fig_num}', callback=self.plot_callback, tag=f"plot_callback{self.plot_fig_num}", before="add_plot")
+        with dpg.plot(label=f"figure{self.plot_fig_num}", width=-1, tag=f'{self.gui_label["plot"]}{self.plot_fig_num}', before="log_header"):
             # optionally create legend
             dpg.add_plot_legend()
 
