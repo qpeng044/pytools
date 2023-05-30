@@ -2,12 +2,12 @@ import re
 import dearpygui.dearpygui as dpg
 import os
 
-gui_label_ch = ["选择文件", "打开", "查找字符", "画图", "打开多图模式", "关闭多图模式"]
+gui_label_ch = ["选择文件", "打开", "提取数据", "画图", "打开多图模式", "关闭多图模式","日志"]
 gui_label_en = ["SelectFile", "Open", "InputPatten",
-                "plot", "OpenMultiPlot", "CloseMultiPlot"]
+                "plot", "OpenMultiPlot", "CloseMultiPlot","Logger"]
 
 gui_label_key = ["select_data", "open_file", "input_patten",
-                 "plot", "open_multplot", "close_multplot"]
+                 "plot", "open_multplot", "close_multplot","logger"]
 
 
 class GUI():
@@ -32,7 +32,7 @@ class GUI():
                     self.pattern_history.append(line.replace("\n", ""))
                     line = fid.readline()
         dpg.create_context()
-        dpg.create_viewport(width=600, height=400)
+        dpg.create_viewport(title='数据分析', width=600, height=400)
         dpg.setup_dearpygui()
         with dpg.font_registry():
             with dpg.font(r"ZiTiGuanJiaFangSongTi-2.ttf", 20) as default_font:
@@ -67,7 +67,7 @@ class GUI():
                 dpg.add_button(label=self.gui_label["open_multplot"],
                                callback=self.multi_plot_callback, tag="multi_plot")
             self.add_plot_callback(None, None)
-            dpg.add_text("logger:", tag="log_header")
+            dpg.add_text(self.gui_label["logger"], tag="log_header")
             dpg.add_text('', tag='log_text')
 
         dpg.show_viewport()
