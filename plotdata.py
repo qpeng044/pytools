@@ -2,12 +2,12 @@ import re
 import dearpygui.dearpygui as dpg
 import os
 
-gui_label_ch = ["选择文件", "打开", "提取数据", "画图", "打开多图模式", "关闭多图模式","日志"]
+gui_label_ch = ["选择文件", "打开", "提取数据", "画图", "打开多图模式", "关闭多图模式", "日志"]
 gui_label_en = ["SelectFile", "Open", "InputPatten",
-                "plot", "OpenMultiPlot", "CloseMultiPlot","Logger"]
+                "plot", "OpenMultiPlot", "CloseMultiPlot", "Logger"]
 
 gui_label_key = ["select_data", "open_file", "input_patten",
-                 "plot", "open_multplot", "close_multplot","logger"]
+                 "plot", "open_multplot", "close_multplot", "logger"]
 
 
 class GUI():
@@ -138,7 +138,7 @@ class GUI():
         if(self.file == ''):
             print("no file selected")
             return
-        decimal_regex = r'(?<=\b{})\d+\.\d+'.format(pattern)
+        decimal_regex = r'(?<={})-?\d+\.?\d*'.format(pattern)
         # print(decimal_regex)
         plot_figure_num = int(sender[-1])
         with open(self.file, 'r') as fid:
