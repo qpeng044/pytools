@@ -2,12 +2,12 @@ import dearpygui.dearpygui as dpg
 from multiprocessing import Process, Queue, Lock
 import time
 import sched
-gui_label_ch = ["开始", "添加路径", "清除路径", "画图", "打开多图模式", "关闭多图模式", "日志"]
+gui_label_ch = ["开始", "添加路径", "清除路径", "设置速度", "打开多图模式", "关闭多图模式", "日志"]
 gui_label_en = ["Start", "AddPath", "DeletePath",
-                "plot", "OpenMultiPlot", "CloseMultiPlot", "Logger"]
+                "SetSpeed", "OpenMultiPlot", "CloseMultiPlot", "Logger"]
 
 gui_label_tag = ["start", "add_path", "delete_path",
-                 "plot", "open_multplot", "close_multplot", "logger"]
+                 "set_speed", "open_multplot", "close_multplot", "logger"]
 
 
 class App:
@@ -46,19 +46,7 @@ class App:
                 dpg.add_line_series(
                     x=control_robot_position_data[0], y=control_robot_position_data[1], tag="raw_path", parent=f"simulink_plot_y_axis")
 
-        dpg.set_viewport_resize_callback(self.viewport_resize_callback)
-        dpg.show_viewport()
-        dpg.set_primary_window("Primary Window", True)
-        dpg.start_dearpygui()
-        dpg.destroy_context()
-
-    def viewport_resize_callback(self, sender, appdata):
-        dpg.set_item_width("simulink_plot", dpg.get_viewport_width()-10)
-        dpg.set_item_height("simulink_plot", dpg.get_viewport_height(
-        )-dpg.get_item_pos(gui_label_tag[0])[1]-50)
-
-    def InitRobotMotion(self, sender, appdata):
-        with dpg.window(tag="robot_motion", on_close=self.CloseCallback):
+        with dpg.window(tag="robot_motion", on_close=self.CloseCallback, show=False):
             dpg.add_button(label=gui_label_ch[2],
                            tag=gui_label_tag[2], callback=self.ClearPointToMap)
             with dpg.plot(tag="motion_map"):
@@ -71,19 +59,40 @@ class App:
                                   tag=f"y_axis")
                 dpg.add_line_series(
                     x=control_robot_position_data[0], y=control_robot_position_data[1], tag="head_direction_data", parent=f"y_axis")
-            if(self.is_init_motion_handle == 0):
-                self.is_init_motion_handle = 1
-                with dpg.item_handler_registry(tag="add_point_to_map") as handler:
-                    dpg.add_item_clicked_handler(callback=self.AddPointToMap)
+            with dpg.item_handler_registry(tag="add_point_to_map") as handler:
+                dpg.add_item_clicked_handler(callback=self.AddPointToMap)
 
-                with dpg.item_handler_registry(tag="robot_motion_resize") as handler:
-                    dpg.add_item_resize_handler(
-                        callback=self.RobotMotionResizeCallback)
+            with dpg.item_handler_registry(tag="robot_motion_resize") as handler:
+                dpg.add_item_resize_handler(
+                    callback=self.RobotMotionResizeCallback)
             dpg.bind_item_handler_registry(
                 "robot_motion", "robot_motion_resize")
             dpg.bind_item_handler_registry(
                 "motion_map", "add_point_to_map")
             # dpg.add_table(tag="point_table")
+        with dpg.window(label="Set Point Info", show=False, tag="set_point_info", no_title_bar=True):
+            with dpg.group(horizontal=True):
+                dpg.add_text(label=gui_label_ch[4])
+                # dpg.add_float_value(tag=gui_label_tag[3])
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="OK", width=75, callback=lambda: dpg.configure_item(
+                    "set_point_info", show=False))
+                dpg.add_button(label="Cancel", width=75, callback=lambda: dpg.configure_item(
+                    "set_point_info", show=False))
+
+        dpg.set_viewport_resize_callback(self.viewport_resize_callback)
+        dpg.show_viewport()
+        dpg.set_primary_window("Primary Window", True)
+        dpg.start_dearpygui()
+        dpg.destroy_context()
+
+    def viewport_resize_callback(self, sender, appdata):
+        dpg.set_item_width("simulink_plot", dpg.get_viewport_width()-10)
+        dpg.set_item_height("simulink_plot", dpg.get_viewport_height(
+        )-dpg.get_item_pos(gui_label_tag[0])[1]-50)
+
+    def InitRobotMotion(self, sender, appdata):
+        dpg.configure_item("robot_motion", show=True)
 
     def ClearPointToMap(self, sender, appdata):
         global head_direction_data, head_speed_data, control_time, control_robot_position_data
@@ -96,7 +105,7 @@ class App:
         if(sender == "robot_motion"):
             dpg.set_value("raw_path", [
                 control_robot_position_data[0], control_robot_position_data[1]])
-        dpg.delete_item(sender)
+            dpg.configure_item("robot_motion", show=False)
 
     def RobotMotionResizeCallback(self, send, appdata):
         dpg.set_item_width("motion_map", dpg.get_item_width("robot_motion")-10)
@@ -109,7 +118,7 @@ class App:
         print(control_robot_position_data)
         dpg.set_value("head_direction_data", [
                       control_robot_position_data[0], control_robot_position_data[1]])
-        
+        dpg.configure_item("set_point_info", show=True)
 
 
 head_direction_data = []
