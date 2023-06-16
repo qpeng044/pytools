@@ -25,21 +25,22 @@ robot_max_yaw_rate = 0.5
 robot_max_yaw_acc = 0.5
 lock = threading.RLock()
 
-counter = 0
+
 distance_two_wheel = 0.1
 is_start_simulation = Value('i', 0)
 generation_queue = Queue(10)
 app_queue = Queue(1)
 
 
-def GenerationData():
-    global counter, is_start_simulation
-    counter += 1
+def GenerationData(is_start_simulation, generation_queue, app_queue):
+    counter = 0
     key_press_status = {"a": 0, "w": 0, "s": 0, "d": 0}
     control_robot_position_data = {"px": [0], "py": [0], "vr": [
         0], "vl": [0], "v": [0], "theta": [0], "t": [0]}
+    print(is_start_simulation.value)
     while(is_start_simulation.value):
         if(not generation_queue.empty()):
+            print(f"get key status{time.time()}")
             key_press_status = generation_queue.get()
         control_robot_position_data["t"].append(time.time())
         dt = control_robot_position_data["t"][-1] - \
@@ -79,6 +80,7 @@ def GenerationData():
             control_robot_position_data["px"][-1]+vx*dt)
         control_robot_position_data["py"].append(
             control_robot_position_data["py"][-1]+vy*dt)
+        print(f"end time:{time.time()}")
         if(counter % 100 == 0):
             counter = 0
             # print(dv, control_robot_position_data["v"][-1],
@@ -144,6 +146,7 @@ class App:
         dpg.destroy_context()
 
     def FrameCallback(self):
+        global is_start_simulation
         self.frame_counter += 1
         if(is_start_simulation.value == 0):
             return
@@ -165,7 +168,7 @@ class App:
             self.key_press_status["d"] = 0
         generation_queue.put(self.key_press_status)
         # print(
-        #     f'a:{key_press_status["a"]},w:{key_press_status["w"]},d:{key_press_status["d"]},s:{key_press_status["s"]}')
+        #     f'a:{self.key_press_status["a"]},w:{self.key_press_status["w"]},d:{self.key_press_status["d"]},s:{self.key_press_status["s"]}')
         if(self.frame_counter % 10 == 0):
             self.frame_counter = 0
             pad = 2
@@ -179,11 +182,13 @@ class App:
                 self.control_robot_position_data["py"])-pad, max(self.control_robot_position_data["py"])+pad)
 
     def StartSimulation(self, sender, appdata):
-        global world_sched, is_start_simulation
+        global is_start_simulation, generation_queue, app_queue
         print("start sched")
         is_start_simulation.value = 1
-        self.process = Process(target=GenerationData)
+        self.process = Process(target=GenerationData,
+                               args=(is_start_simulation, generation_queue, app_queue,))
         self.process.start()
+        self.process.join()
 
     def StopSimulation(self, sender, appdata):
         global world_sched, is_start_simulation
