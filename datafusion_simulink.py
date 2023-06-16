@@ -5,6 +5,7 @@ import sched
 import numpy as np
 import pandas as ps
 import threading
+import copy
 gui_label_ch = ["开始", "添加路径", "清除路径", "设置速度", "结束", "关闭多图模式", "日志"]
 gui_label_en = ["Start", "AddPath", "DeletePath",
                 "SetSpeed", "Stop", "CloseMultiPlot", "Logger"]
@@ -35,31 +36,33 @@ app_queue = Queue(1)
 def GenerationData(is_start_simulation, generation_queue, app_queue):
     counter = 0
     key_press_status = {"a": 0, "w": 0, "s": 0, "d": 0}
-    control_robot_position_data = {"px": [0], "py": [0], "vr": [
-        0], "vl": [0], "v": [0], "theta": [0], "t": [0]}
+    control_robot_position_data = {"px": 0, "py": 0, "vr":
+                                   0, "vl": 0, "v": 0, "theta": 0, "t": 0}
+    control_robot_position_data_last = {"px": 0, "py": 0, "vr":
+                                        0, "vl": 0, "v": 0, "theta": 0, "t": 0}
     print(is_start_simulation.value)
     while(is_start_simulation.value):
         if(not generation_queue.empty()):
-            print(f"get key status{time.time()}")
             key_press_status = generation_queue.get()
-        control_robot_position_data["t"].append(time.time())
-        dt = control_robot_position_data["t"][-1] - \
-            control_robot_position_data["t"][-2]
+        # time.sleep(0.001)
+        control_robot_position_data["t"] = (time.time())
+        dt = control_robot_position_data["t"] - \
+            control_robot_position_data_last["t"]
         if(key_press_status["w"] == 1):
             dv = robot_max_acc*dt
-            if(control_robot_position_data["v"][-1] >= robot_max_speed):
-                control_robot_position_data["v"].append(
-                    control_robot_position_data["v"][-1])
+            if(control_robot_position_data_last["v"] >= robot_max_speed):
+                control_robot_position_data["v"] = (
+                    control_robot_position_data_last["v"])
             else:
-                control_robot_position_data["v"].append(
-                    control_robot_position_data["v"][-1]+dv)
+                control_robot_position_data["v"] = (
+                    control_robot_position_data_last["v"]+dv)
         else:
             dv = -robot_max_acc*dt
-            if(control_robot_position_data["v"][-1] <= 0):
-                control_robot_position_data["v"].append(0)
+            if(control_robot_position_data_last["v"] <= 0):
+                control_robot_position_data["v"] = (0)
             else:
-                control_robot_position_data["v"].append(
-                    control_robot_position_data["v"][-1]+dv)
+                control_robot_position_data["v"] = (
+                    control_robot_position_data_last["v"]+dv)
                 ###############theta#######################
         if(key_press_status["d"] == 1 and key_press_status["a"] == 1):
             dtheta = 0
@@ -69,32 +72,30 @@ def GenerationData(is_start_simulation, generation_queue, app_queue):
             dtheta = -robot_max_yaw_acc*dt
         else:
             dtheta = 0
-        control_robot_position_data["theta"].append(
-            control_robot_position_data["theta"][-1]+dtheta)
-    #######################px,py###################################
-        vx = control_robot_position_data["v"][-1] * \
-            np.cos(control_robot_position_data["theta"][-1])
-        vy = control_robot_position_data["v"][-1] * \
-            np.sin(control_robot_position_data["theta"][-1])
-        control_robot_position_data["px"].append(
-            control_robot_position_data["px"][-1]+vx*dt)
-        control_robot_position_data["py"].append(
-            control_robot_position_data["py"][-1]+vy*dt)
-        print(f"end time:{time.time()}")
-        if(counter % 100 == 0):
-            counter = 0
-            # print(dv, control_robot_position_data["v"][-1],
-            #       dtheta, control_robot_position_data["theta"][-1])
-            print(control_robot_position_data["px"][-1],
-                  control_robot_position_data["py"][-1])
+        control_robot_position_data["theta"] = (
+            control_robot_position_data_last["theta"]+dtheta)
 
-        lock.acquire()
-        if app_queue.full():
-            drop = app_queue.get()
+    # #######################px,py###################################
+        vx = control_robot_position_data["v"] * \
+            np.cos(control_robot_position_data["theta"])
+        vy = control_robot_position_data["v"] * \
+            np.sin(control_robot_position_data["theta"])
+        control_robot_position_data["px"] = (
+            control_robot_position_data_last["px"]+vx*dt)
+        control_robot_position_data["py"] = (
+            control_robot_position_data_last["py"]+vy*dt)
+        # print(f"end time:{time.time()}")
+        # if(counter % 100 == 0):
+        #     counter = 0
+        #     # print(dv, control_robot_position_data["v"][-1],
+        #     #       dtheta, control_robot_position_data["theta"][-1])
+        #     print(control_robot_position_data["px"][-1],
+        #           control_robot_position_data["py"][-1])
+        # print(f'a:{key_press_status["a"]}')
+        if not app_queue.full():
             app_queue.put(control_robot_position_data)
-        else:
-            app_queue.put(control_robot_position_data)
-        lock.release()
+        control_robot_position_data_last = copy.deepcopy(
+            control_robot_position_data)
 
 
 class App:
@@ -173,7 +174,11 @@ class App:
             self.frame_counter = 0
             pad = 2
             if(not app_queue.empty()):
-                self.control_robot_position_data = app_queue.get()
+                temp_data = app_queue.get()
+                # print(f"get pose data{temp_data}")
+                for key in self.control_robot_position_data.keys():
+                    self.control_robot_position_data[key].append(
+                        temp_data[key])
             dpg.set_value("raw_path",
                           [self.control_robot_position_data["px"], self.control_robot_position_data["py"]])
             dpg.set_axis_limits("simulink_plot_x_axis", min(
@@ -188,12 +193,15 @@ class App:
         self.process = Process(target=GenerationData,
                                args=(is_start_simulation, generation_queue, app_queue,))
         self.process.start()
-        self.process.join()
 
     def StopSimulation(self, sender, appdata):
         global world_sched, is_start_simulation
         print("stop sched")
         is_start_simulation.value = 0
+        self.process.join()
+        self.process.close()
+        dpg.set_axis_limits_auto("simulink_plot_x_axis")
+        dpg.set_axis_limits_auto("simulink_plot_y_axis")
 
     def viewport_resize_callback(self, sender, appdata):
         dpg.set_item_width("simulink_plot", dpg.get_viewport_width()-10)
