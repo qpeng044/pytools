@@ -1,25 +1,110 @@
 import dearpygui.dearpygui as dpg
-from multiprocessing import Process, Queue, Lock
+from multiprocessing import Process, Queue, Lock, Value, Manager
 import time
 import sched
 import numpy as np
 import pandas as ps
-gui_label_ch = ["开始", "添加路径", "清除路径", "设置速度", "打开多图模式", "关闭多图模式", "日志"]
+import threading
+gui_label_ch = ["开始", "添加路径", "清除路径", "设置速度", "结束", "关闭多图模式", "日志"]
 gui_label_en = ["Start", "AddPath", "DeletePath",
-                "SetSpeed", "OpenMultiPlot", "CloseMultiPlot", "Logger"]
+                "SetSpeed", "Stop", "CloseMultiPlot", "Logger"]
 
 gui_label_tag = ["start", "add_path", "delete_path",
-                 "set_speed", "open_multplot", "close_multplot", "logger"]
+                 "set_speed", "stop", "close_multplot", "logger"]
+
+
+control_robot_position_data_key = [[0], [0], [0]]
+
+motion_start_time = time.time()
+world_sched = sched.scheduler(time.time, time.sleep)
+world_sched_event = None
+current_pose_index = 0
+robot_max_acc = 0.5
+robot_max_speed = 0.5
+robot_max_yaw_rate = 0.5
+robot_max_yaw_acc = 0.5
+lock = threading.RLock()
+
+counter = 0
+distance_two_wheel = 0.1
+is_start_simulation = Value('i', 0)
+generation_queue = Queue(10)
+app_queue = Queue(1)
+
+
+def GenerationData():
+    global counter, is_start_simulation
+    counter += 1
+    key_press_status = {"a": 0, "w": 0, "s": 0, "d": 0}
+    control_robot_position_data = {"px": [0], "py": [0], "vr": [
+        0], "vl": [0], "v": [0], "theta": [0], "t": [0]}
+    while(is_start_simulation.value):
+        if(not generation_queue.empty()):
+            key_press_status = generation_queue.get()
+        control_robot_position_data["t"].append(time.time())
+        dt = control_robot_position_data["t"][-1] - \
+            control_robot_position_data["t"][-2]
+        if(key_press_status["w"] == 1):
+            dv = robot_max_acc*dt
+            if(control_robot_position_data["v"][-1] >= robot_max_speed):
+                control_robot_position_data["v"].append(
+                    control_robot_position_data["v"][-1])
+            else:
+                control_robot_position_data["v"].append(
+                    control_robot_position_data["v"][-1]+dv)
+        else:
+            dv = -robot_max_acc*dt
+            if(control_robot_position_data["v"][-1] <= 0):
+                control_robot_position_data["v"].append(0)
+            else:
+                control_robot_position_data["v"].append(
+                    control_robot_position_data["v"][-1]+dv)
+                ###############theta#######################
+        if(key_press_status["d"] == 1 and key_press_status["a"] == 1):
+            dtheta = 0
+        elif(key_press_status["a"] == 1):
+            dtheta = robot_max_yaw_acc*dt
+        elif key_press_status["d"] == 1:
+            dtheta = -robot_max_yaw_acc*dt
+        else:
+            dtheta = 0
+        control_robot_position_data["theta"].append(
+            control_robot_position_data["theta"][-1]+dtheta)
+    #######################px,py###################################
+        vx = control_robot_position_data["v"][-1] * \
+            np.cos(control_robot_position_data["theta"][-1])
+        vy = control_robot_position_data["v"][-1] * \
+            np.sin(control_robot_position_data["theta"][-1])
+        control_robot_position_data["px"].append(
+            control_robot_position_data["px"][-1]+vx*dt)
+        control_robot_position_data["py"].append(
+            control_robot_position_data["py"][-1]+vy*dt)
+        if(counter % 100 == 0):
+            counter = 0
+            # print(dv, control_robot_position_data["v"][-1],
+            #       dtheta, control_robot_position_data["theta"][-1])
+            print(control_robot_position_data["px"][-1],
+                  control_robot_position_data["py"][-1])
+
+        lock.acquire()
+        if app_queue.full():
+            drop = app_queue.get()
+            app_queue.put(control_robot_position_data)
+        else:
+            app_queue.put(control_robot_position_data)
+        lock.release()
 
 
 class App:
     is_init_motion_handle = 0
+    frame_counter = 0
+    control_robot_position_data = {"px": [0], "py": [0], "vr": [
+        0], "vl": [0], "v": [0], "theta": [0], "t": [0]}
+    key_press_status = {"a": 0, "w": 0, "s": 0, "d": 0}
 
     def __init__(self) -> None:
         self.Gui()
         word_simulink = WorldCoordinate()
-        self.process = Process(target=word_simulink.run())
-        self.process.start()
 
     def Gui(self):
         dpg.create_context()
@@ -29,13 +114,13 @@ class App:
             with dpg.font(r"ZiTiGuanJiaFangSongTi-2.ttf", 15) as default_font:
                 dpg.add_font_range_hint(dpg.mvFontRangeHint_Chinese_Full)
         dpg.bind_font(default_font)  # Binds the font globally
-        with dpg.window(tag="Primary Window"):
+        with dpg.window(tag="Primary Window", on_close=self.CloseCallback):
             global head_direction_data, head_speed_data, control_time, control_robot_position_data_key
             with dpg.group(horizontal=True):
                 dpg.add_button(label=gui_label_ch[0],
-                               tag=gui_label_tag[0])
-                dpg.add_button(label=gui_label_ch[1],
-                               tag=gui_label_tag[1], callback=self.InitRobotMotion)
+                               tag=gui_label_tag[0], callback=self.StartSimulation)
+                dpg.add_button(label=gui_label_ch[4],
+                               tag=gui_label_tag[4], callback=self.StopSimulation)
             with dpg.plot(tag="simulink_plot",
                           width=dpg.get_viewport_width()-10, height=dpg.get_viewport_height()-dpg.get_item_pos(gui_label_tag[0])[1]-50):
                 dpg.add_plot_legend()
@@ -47,136 +132,74 @@ class App:
                                   tag=f"simulink_plot_y_axis")
                 dpg.add_line_series(
                     x=control_robot_position_data_key[0], y=control_robot_position_data_key[1], tag="raw_path", parent=f"simulink_plot_y_axis")
-
-        with dpg.window(tag="robot_motion", on_close=self.CloseCallback, show=False):
-            dpg.add_button(label=gui_label_ch[2],
-                           tag=gui_label_tag[2], callback=self.ClearPointToMap)
-            with dpg.plot(tag="motion_map"):
-                dpg.add_plot_legend()
-
-                # REQUIRED: create x and y axes
-                dpg.add_plot_axis(dpg.mvXAxis, label="x",
-                                  tag=f"x_axis")
-                dpg.add_plot_axis(dpg.mvYAxis, label="y",
-                                  tag=f"y_axis")
-                dpg.add_line_series(
-                    x=control_robot_position_data_key[0], y=control_robot_position_data_key[1], tag="head_direction_data", parent=f"y_axis")
-            with dpg.item_handler_registry(tag="add_point_to_map") as handler:
-                dpg.add_item_clicked_handler(callback=self.AddPointToMap)
-
-            with dpg.item_handler_registry(tag="robot_motion_resize") as handler:
-                dpg.add_item_resize_handler(
-                    callback=self.RobotMotionResizeCallback)
-            dpg.bind_item_handler_registry(
-                "robot_motion", "robot_motion_resize")
-            dpg.bind_item_handler_registry(
-                "motion_map", "add_point_to_map")
-            # dpg.add_table(tag="point_table")
-        with dpg.window(label="Set Point Info", show=False, tag="set_point_info", no_title_bar=True, modal=True, no_background=True):
-            with dpg.group(horizontal=True):
-                dpg.add_text(gui_label_ch[3])
-                # dpg.add_float_value(
-                #     label=gui_label_ch[3], tag=gui_label_tag[3])
-                # dpg.add_drag_float(max_value=10.0, speed=0.1)
-                dpg.add_input_float(
-                    tag=gui_label_tag[3], default_value=0.0)
-            with dpg.group(horizontal=True):
-                dpg.add_button(label="OK", width=75,
-                               callback=self.SetposeSpeed)
-
         dpg.set_viewport_resize_callback(self.viewport_resize_callback)
         dpg.show_viewport()
         dpg.set_primary_window("Primary Window", True)
-        dpg.start_dearpygui()
+        # dpg.start_dearpygui()
+        while dpg.is_dearpygui_running():
+            # insert here any code you would like to run in the render loop
+            # you can manually stop by using stop_dearpygui()
+            self.FrameCallback()
+            dpg.render_dearpygui_frame()
         dpg.destroy_context()
 
-    def SetposeSpeed(self, sender, appdata):
-        dpg.configure_item("set_point_info", show=False)
-        control_robot_position_data_key[2].append(
-            dpg.get_value(gui_label_tag[3]))
+    def FrameCallback(self):
+        self.frame_counter += 1
+        if(is_start_simulation.value == 0):
+            return
+        if dpg.is_key_down(key=dpg.mvKey_W):
+            self.key_press_status["w"] = 1
+        else:
+            self.key_press_status["w"] = 0
+        if dpg.is_key_down(key=dpg.mvKey_A):
+            self.key_press_status["a"] = 1
+        else:
+            self.key_press_status["a"] = 0
+        if dpg.is_key_down(key=dpg.mvKey_S):
+            self.key_press_status["s"] = 1
+        else:
+            self.key_press_status["s"] = 0
+        if dpg.is_key_down(key=dpg.mvKey_D):
+            self.key_press_status["d"] = 1
+        else:
+            self.key_press_status["d"] = 0
+        generation_queue.put(self.key_press_status)
+        # print(
+        #     f'a:{key_press_status["a"]},w:{key_press_status["w"]},d:{key_press_status["d"]},s:{key_press_status["s"]}')
+        if(self.frame_counter % 10 == 0):
+            self.frame_counter = 0
+            pad = 2
+            if(not app_queue.empty()):
+                self.control_robot_position_data = app_queue.get()
+            dpg.set_value("raw_path",
+                          [self.control_robot_position_data["px"], self.control_robot_position_data["py"]])
+            dpg.set_axis_limits("simulink_plot_x_axis", min(
+                self.control_robot_position_data["px"])-pad, max(self.control_robot_position_data["px"])+pad)
+            dpg.set_axis_limits("simulink_plot_y_axis", min(
+                self.control_robot_position_data["py"])-pad, max(self.control_robot_position_data["py"])+pad)
+
+    def StartSimulation(self, sender, appdata):
+        global world_sched, is_start_simulation
+        print("start sched")
+        is_start_simulation.value = 1
+        self.process = Process(target=GenerationData)
+        self.process.start()
+
+    def StopSimulation(self, sender, appdata):
+        global world_sched, is_start_simulation
+        print("stop sched")
+        is_start_simulation.value = 0
 
     def viewport_resize_callback(self, sender, appdata):
         dpg.set_item_width("simulink_plot", dpg.get_viewport_width()-10)
         dpg.set_item_height("simulink_plot", dpg.get_viewport_height(
         )-dpg.get_item_pos(gui_label_tag[0])[1]-50)
 
-    def InitRobotMotion(self, sender, appdata):
-        dpg.configure_item("robot_motion", show=True)
-
-    def ClearPointToMap(self, sender, appdata):
-        global head_direction_data, head_speed_data, control_time, control_robot_position_data_key
-        control_robot_position_data_key = [[0], [0], [0]]
-        dpg.set_value("head_direction_data", [
-                      control_robot_position_data_key[0], control_robot_position_data_key[1]])
-
     def CloseCallback(self, sender, appdata):
-        global head_direction_data, head_speed_data, control_time, control_robot_position_data_key
-        if(sender == "robot_motion"):
-            dpg.set_value("raw_path", [
-                control_robot_position_data_key[0], control_robot_position_data_key[1]])
-            dpg.configure_item("robot_motion", show=False)
+        pass
 
     def RobotMotionResizeCallback(self, send, appdata):
         dpg.set_item_width("motion_map", dpg.get_item_width("robot_motion")-10)
-
-    def AddPointToMap(self, sender, appdata):
-        global head_direction_data, head_speed_data, control_time, control_robot_position_data_key
-        mx, my = dpg.get_plot_mouse_pos()
-        control_robot_position_data_key[0].append(mx)
-        control_robot_position_data_key[1].append(my)
-        print(control_robot_position_data_key)
-        print("\n")
-        dpg.set_value("head_direction_data", [
-                      control_robot_position_data_key[0], control_robot_position_data_key[1]])
-        posex, posey = dpg.get_mouse_pos()
-        dpg.configure_item("set_point_info", show=True, pos=[posex, posey])
-
-
-head_direction_data = []
-head_speed_data = [0]  # m/s
-robot_position_data = []
-control_time = []
-control_direction_data = []
-control_speed_data = []
-control_robot_position_data_key = [[0], [0], [0]]
-control_robot_position_data = ps.DataFrame(
-    {"px": [0], "py": [0], "vr": [0], "vl": [0], "v": [0], "theta": [0], "t": [0]})
-motion_start_time = time.time()
-world_sched = sched.scheduler(time.time, time.sleep)
-current_pose_index = 0
-robot_max_acc = 0.5
-robot_max_speed = 0.5
-robot_max_yaw_rate = 0.5
-robot_max_yaw_acc = 0.5
-
-
-def GenerateRobotPath():
-    dt = 0.001  # dt=1ms
-    while True:
-        if(control_direction_data["px"][-1] >= control_robot_position_data_key[0][current_pose_index] and control_direction_data["py"][-1] >= control_robot_position_data_key[1][current_pose_index]):
-            current_pose_index += 1
-            if(current_pose_index >= len(control_robot_position_data_key[0])):
-                break
-        else:
-            target_theta = np.arctan(
-                control_robot_position_data_key[1][current_pose_index]/control_robot_position_data_key[0][current_pose_index])
-            if control_direction_data["theta"][-1] >= target_theta:
-                #直行
-                control_direction_data["theta"].append(control_direction_data["theta"][-1] )
-            else:
-                #转向
-                
-
-
-
-def GetRobotInfoBytime(current_time):
-    dt = current_time-motion_start_time
-    theta = np.arctan(
-        control_robot_position_data_key[1][current_pose_index]/control_robot_position_data_key[0][current_pose_index])
-    dx = dt * \
-        control_robot_position_data_key[2][current_pose_index]*np.cos(theta)
-    dy = dt * \
-        control_robot_position_data_key[2][current_pose_index]*np.sin(theta)
 
 
 class WorldCoordinate:
