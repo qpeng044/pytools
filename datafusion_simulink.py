@@ -14,8 +14,6 @@ gui_label_tag = ["start", "add_path", "delete_path",
                  "set_speed", "stop", "close_multplot", "logger"]
 
 
-control_robot_position_data_key = [[0], [0], [0]]
-
 motion_start_time = time.time()
 world_sched = sched.scheduler(time.time, time.sleep)
 world_sched_event = None
@@ -98,11 +96,13 @@ def GenerationData(is_start_simulation, generation_queue, app_queue):
             control_robot_position_data)
 
 
+raw_robot_data = {"px": [0], "py": [0], "vr": [
+    0], "vl": [0], "v": [0], "theta": [0], "t": [0]}
+
+
 class App:
     is_init_motion_handle = 0
     frame_counter = 0
-    control_robot_position_data = {"px": [0], "py": [0], "vr": [
-        0], "vl": [0], "v": [0], "theta": [0], "t": [0]}
     key_press_status = {"a": 0, "w": 0, "s": 0, "d": 0}
 
     def __init__(self) -> None:
@@ -110,6 +110,7 @@ class App:
         word_simulink = WorldCoordinate()
 
     def Gui(self):
+        global raw_robot_data
         dpg.create_context()
         dpg.create_viewport(title='数据融合', width=600, height=400)
         dpg.setup_dearpygui()
@@ -134,7 +135,7 @@ class App:
                 dpg.add_plot_axis(dpg.mvYAxis, label="y",
                                   tag=f"simulink_plot_y_axis")
                 dpg.add_line_series(
-                    x=control_robot_position_data_key[0], y=control_robot_position_data_key[1], tag="raw_path", parent=f"simulink_plot_y_axis")
+                    x=raw_robot_data["px"], y=raw_robot_data["py"], tag="raw_path", parent=f"simulink_plot_y_axis")
         dpg.set_viewport_resize_callback(self.viewport_resize_callback)
         dpg.show_viewport()
         dpg.set_primary_window("Primary Window", True)
@@ -147,7 +148,7 @@ class App:
         dpg.destroy_context()
 
     def FrameCallback(self):
-        global is_start_simulation
+        global is_start_simulation, raw_robot_data
         self.frame_counter += 1
         if(is_start_simulation.value == 0):
             return
@@ -176,15 +177,17 @@ class App:
             if(not app_queue.empty()):
                 temp_data = app_queue.get()
                 # print(f"get pose data{temp_data}")
-                for key in self.control_robot_position_data.keys():
-                    self.control_robot_position_data[key].append(
+                lock.acquire()
+                for key in raw_robot_data.keys():
+                    raw_robot_data[key].append(
                         temp_data[key])
+                lock.release()
             dpg.set_value("raw_path",
-                          [self.control_robot_position_data["px"], self.control_robot_position_data["py"]])
+                          [raw_robot_data["px"], raw_robot_data["py"]])
             dpg.set_axis_limits("simulink_plot_x_axis", min(
-                self.control_robot_position_data["px"])-pad, max(self.control_robot_position_data["px"])+pad)
+                raw_robot_data["px"])-pad, max(raw_robot_data["px"])+pad)
             dpg.set_axis_limits("simulink_plot_y_axis", min(
-                self.control_robot_position_data["py"])-pad, max(self.control_robot_position_data["py"])+pad)
+                raw_robot_data["py"])-pad, max(raw_robot_data["py"])+pad)
 
     def StartSimulation(self, sender, appdata):
         global is_start_simulation, generation_queue, app_queue
@@ -234,26 +237,137 @@ class Robot:
 
 
 class ImuSensor:
-    imu_data = [[], [], [], [], [], []]  # [ax,ay,az,wx,wy,wz]
-    imu_nosie = [[0, 0.1], [0, 0.1], [0, 0.1], [
-        0, 0.01], [0, 0.01], [0, 0.01]]  # [mean,var]
+    current_raw_robot_data = {"px": 0, "py": 0,
+                              "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
+    last_raw_robot_data = {"px": 0, "py": 0,
+                           "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
+    real_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
+                     "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
+    imu_nosie = {"ax_n": [0, 0.1], "ay_n": [0, 0.1], "az_n": [0, 0.1], "wx_n": [
+        0, 0.01], "wy_n": [0, 0.01], "wz_n": [0, 0.01]}  # [mean,var]
+    noise_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
+                      "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
 
-    def __init__(self) -> None:
+    def __init__(self, ) -> None:
         global world_sched
         world_sched.enter(0.010, 2, self.generate_data)
 
     def generate_data(self):
+        global raw_robot_data
         world_sched.enter(0.010, 2, self.generate_data)
+        lock.acquire()
+        for key in raw_robot_data.keys():
+            self.current_raw_robot_data[key] = raw_robot_data[key][-1]
+        lock.release()
+        if(self.last_raw_robot_data["t"] == 0):
+            self.last_raw_robot_data = copy.deepcopy(
+                self.current_raw_robot_data)
+        #####
+        self.real_imu_data["ax"] = (self.current_raw_robot_data["v"]-self.last_raw_robot_data["v"]) / (
+            self.current_raw_robot_data["t"]-self.last_raw_robot_data["t"])
+        self.real_imu_data["wx"] = (self.current_raw_robot_data["theta"]-self.last_raw_robot_data["theta"]) / (
+            self.current_raw_robot_data["t"]-self.last_raw_robot_data["t"])
+        self.noise_imu_data["ax"] = self.real_imu_data["ax"] + \
+            np.random.normal(
+                loc=self.imu_nosie["ax_n"][0], scale=self.imu_nosie["ax_n"][1], size=None)
+        self.noise_imu_data["wx"] = self.real_imu_data["wx"] + \
+            np.random.normal(
+                loc=self.imu_nosie["wx_n"][0], scale=self.imu_nosie["wx_n"][1], size=None)
+
+        ######
+        self.last_raw_robot_data = copy.deepcopy(
+            self.current_raw_robot_data)
+        return self.real_imu_data, self.noise_imu_data
 
 
 class WheelEncoder:
+    current_raw_robot_data = {"px": 0, "py": 0,
+                              "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
+    last_raw_robot_data = {"px": 0, "py": 0,
+                           "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
+    real_wheel_data = {"vr": 0, "vl": 0}
+    noise_wheel_data = {"vr": 0, "vl": 0}
+    distance_to_center = 0.1  # 10cm
+    encoder_nosie = {"vr": [0, 0.01], "vl": [0, 0.01]}  # [mean,var]
+
     def __init__(self) -> None:
-        pass
+        global world_sched
+        world_sched.enter(0.050, 2, self.generate_data)
+
+    def generate_data(self):
+        global raw_robot_data
+        world_sched.enter(0.050, 2, self.generate_data)
+        lock.acquire()
+        for key in raw_robot_data.keys():
+            self.current_raw_robot_data[key] = raw_robot_data[key][-1]
+        lock.release()
+        if(self.last_raw_robot_data["t"] == 0):
+            self.last_raw_robot_data = copy.deepcopy(
+                self.current_raw_robot_data)
+
+        dtheta = self.current_raw_robot_data["theta"] - \
+            self.last_raw_robot_data["theta"]
+        ddistance = np.sqrt(np.power(self.current_raw_robot_data["px"]-self.last_raw_robot_data["px"])+np.power(
+            self.current_raw_robot_data["py"]-self.last_raw_robot_data["py"]))
+        R = np.sin(dtheta/2)*ddistance/2
+        dt = self.current_raw_robot_data["t"] - \
+            self.last_raw_robot_data["t"]
+        self.real_wheel_data["vr"] = (R-self.distance_to_center)/dt
+        self.real_wheel_data["vl"] = (R+self.distance_to_center)/dt
+
+        self.noise_wheel_data["vr"] = self.real_wheel_data["vr"] + \
+            np.random.normal(
+                self.encoder_nosie["vr"][0], self.encoder_nosie["vr"][1])
+        self.noise_wheel_data["vl"] = self.real_wheel_data["vl"] + \
+            np.random.normal(
+                self.encoder_nosie["vl"][0], self.encoder_nosie["vl"][1])
+
+        self.last_raw_robot_data = copy.deepcopy(
+            self.current_raw_robot_data)
+        return self.real_wheel_data, self.noise_wheel_data
 
 
 class OpticalFlow:
+    current_raw_robot_data = {"px": 0, "py": 0,
+                              "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
+    last_raw_robot_data = {"px": 0, "py": 0,
+                           "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
+    real_optical_data = {"dx": 0, "dy": 0}
+    noise_optical_data = {"dx": 0, "dy": 0}
+    optcal_nosie = {"vr": [0, 0.5], "vl": [0, 0.5]}  # [mean,var]
+
     def __init__(self) -> None:
-        pass
+        global world_sched
+        world_sched.enter(0.050, 2, self.generate_data)
+
+    def generate_data(self):
+        global raw_robot_data
+        world_sched.enter(0.050, 2, self.generate_data)
+        lock.acquire()
+        for key in raw_robot_data.keys():
+            self.current_raw_robot_data[key] = raw_robot_data[key][-1]
+        lock.release()
+        if(self.last_raw_robot_data["t"] == 0):
+            self.last_raw_robot_data = copy.deepcopy(
+                self.current_raw_robot_data)
+        ####
+        dtheta = self.current_raw_robot_data["theta"] - \
+            self.last_raw_robot_data["theta"]
+        ddistance = np.sqrt(np.power(self.current_raw_robot_data["px"]-self.last_raw_robot_data["px"])+np.power(
+            self.current_raw_robot_data["py"]-self.last_raw_robot_data["py"]))
+        self.real_optical_data['dx'] = np.sin(dtheta)*ddistance
+        self.real_optical_data['dy'] = np.cos(dtheta)*ddistance
+
+        self.noise_optical_data['dx'] = self.real_optical_data['dx'] + \
+            np.random.normal(
+                self.optcal_nosie["dx"][0], self.optcal_nosie["dx"][1])
+        self.noise_optical_data['dy'] = self.real_optical_data['dy'] + \
+            np.random.normal(
+                self.optcal_nosie["dy"][0], self.optcal_nosie["dy"][1])
+        ####
+        self.last_raw_robot_data = copy.deepcopy(
+            self.current_raw_robot_data)
+        return self.real_optical_data, self.noise_optical_data
 
 
 class Datafusion:
