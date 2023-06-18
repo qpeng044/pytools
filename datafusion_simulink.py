@@ -15,8 +15,8 @@ gui_label_tag = ["start", "add_path", "delete_path",
 
 
 motion_start_time = time.time()
-world_sched = sched.scheduler(time.time, time.sleep)
-world_sched_event = None
+
+sensor_timer_event = None
 current_pose_index = 0
 robot_max_acc = 0.5
 robot_max_speed = 0.5
@@ -106,8 +106,9 @@ class App:
     key_press_status = {"a": 0, "w": 0, "s": 0, "d": 0}
 
     def __init__(self) -> None:
-        self.Gui()
         word_simulink = WorldCoordinate()
+        self.robot = Robot()
+        self.Gui()
 
     def Gui(self):
         global raw_robot_data
@@ -196,13 +197,15 @@ class App:
         self.process = Process(target=GenerationData,
                                args=(is_start_simulation, generation_queue, app_queue,))
         self.process.start()
+        self.robot.StartRun()
 
     def StopSimulation(self, sender, appdata):
-        global world_sched, is_start_simulation
+        global is_start_simulation
         print("stop sched")
         is_start_simulation.value = 0
         self.process.join()
         self.process.close()
+        self.robot.StopRun()
         dpg.set_axis_limits_auto("simulink_plot_x_axis")
         dpg.set_axis_limits_auto("simulink_plot_y_axis")
 
@@ -220,7 +223,7 @@ class App:
 
 class WorldCoordinate:
     def __init__(self) -> None:
-        self.robot = Robot()
+        pass
 
     def InitRobotMotion(self):
         pass
@@ -229,11 +232,51 @@ class WorldCoordinate:
         pass
 
 
+algo_res_queue = Queue(10)
+sensor_timer = sched.scheduler(time.time, time.sleep)
+stop_sensor_timer = Value('i', 0)
+
+
 class Robot:
+    robot_run_start = Value("i", 0)
+    robot_sensor_queue = Queue(10)
+
     def __init__(self) -> None:
-        self.imu = ImuSensor()
-        self.wheel = WheelEncoder()
-        self.optical = OpticalFlow()
+        self.imu = ImuSensor(self.robot_sensor_queue)
+        self.wheel = WheelEncoder(self.robot_sensor_queue)
+        self.optical = OpticalFlow(self.robot_sensor_queue)
+
+        print("init robot")
+
+    def StartRun(self):
+        global stop_sensor_timer
+        self.robot_run_start.value = 1
+        self.process = Process(target=self.RobotAlgo,
+                               args=(self.robot_run_start, self.robot_sensor_queue, algo_res_queue,))
+        self.process.start()
+        sensor_timer.run()
+
+    def StopRun(self):
+        global stop_sensor_timer
+        self.robot_run_start.value = 0
+        stop_sensor_timer.value = 1
+
+        self.process.join()
+        self.process.close()
+
+    def RobotAlgo(self, status, recv_queue, send_queue):
+
+        while(status.value):
+            if(recv_queue.empty()):
+                time.sleep(0.001)
+                continue
+            sensor_data = recv_queue.get()
+            if(sensor_data[0] == "imu"):
+                print("imu")
+            elif(sensor_data[0] == "encoder"):
+                print("encoder")
+            elif(sensor_data[0] == "optical"):
+                print("optical")
 
 
 class ImuSensor:
@@ -248,13 +291,16 @@ class ImuSensor:
     noise_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
                       "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
 
-    def __init__(self, ) -> None:
-        global world_sched
-        world_sched.enter(0.010, 2, self.generate_data)
+    def __init__(self, q_msg) -> None:
+        global sensor_timer
+        sensor_timer.enter(0.010, 2, self.generate_data)
+        self.robot_queue = q_msg
 
     def generate_data(self):
-        global raw_robot_data
-        world_sched.enter(0.010, 2, self.generate_data)
+        global raw_robot_data, stop_sensor_timer
+        if(stop_sensor_timer.value):
+            return
+        sensor_timer.enter(0.010, 2, self.generate_data)
         lock.acquire()
         for key in raw_robot_data.keys():
             self.current_raw_robot_data[key] = raw_robot_data[key][-1]
@@ -262,7 +308,12 @@ class ImuSensor:
         if(self.last_raw_robot_data["t"] == 0):
             self.last_raw_robot_data = copy.deepcopy(
                 self.current_raw_robot_data)
+            return
+        if(self.current_raw_robot_data["t"]-self.last_raw_robot_data["t"] == 0):
+            return
         #####
+        print(self.current_raw_robot_data)
+        print(self.last_raw_robot_data)
         self.real_imu_data["ax"] = (self.current_raw_robot_data["v"]-self.last_raw_robot_data["v"]) / (
             self.current_raw_robot_data["t"]-self.last_raw_robot_data["t"])
         self.real_imu_data["wx"] = (self.current_raw_robot_data["theta"]-self.last_raw_robot_data["theta"]) / (
@@ -277,7 +328,7 @@ class ImuSensor:
         ######
         self.last_raw_robot_data = copy.deepcopy(
             self.current_raw_robot_data)
-        return self.real_imu_data, self.noise_imu_data
+        self.robot_queue.put(["imu", self.real_imu_data, self.noise_imu_data])
 
 
 class WheelEncoder:
@@ -290,13 +341,16 @@ class WheelEncoder:
     distance_to_center = 0.1  # 10cm
     encoder_nosie = {"vr": [0, 0.01], "vl": [0, 0.01]}  # [mean,var]
 
-    def __init__(self) -> None:
-        global world_sched
-        world_sched.enter(0.050, 2, self.generate_data)
+    def __init__(self, q_msg) -> None:
+        global sensor_timer
+        sensor_timer.enter(0.050, 2, self.generate_data)
+        self.robot_queue = q_msg
 
     def generate_data(self):
-        global raw_robot_data
-        world_sched.enter(0.050, 2, self.generate_data)
+        global raw_robot_data, stop_sensor_timer
+        if(stop_sensor_timer.value):
+            return
+        sensor_timer.enter(0.050, 2, self.generate_data)
         lock.acquire()
         for key in raw_robot_data.keys():
             self.current_raw_robot_data[key] = raw_robot_data[key][-1]
@@ -304,11 +358,13 @@ class WheelEncoder:
         if(self.last_raw_robot_data["t"] == 0):
             self.last_raw_robot_data = copy.deepcopy(
                 self.current_raw_robot_data)
-
+            return
+        if(self.current_raw_robot_data["t"]-self.last_raw_robot_data["t"] == 0):
+            return
         dtheta = self.current_raw_robot_data["theta"] - \
             self.last_raw_robot_data["theta"]
-        ddistance = np.sqrt(np.power(self.current_raw_robot_data["px"]-self.last_raw_robot_data["px"])+np.power(
-            self.current_raw_robot_data["py"]-self.last_raw_robot_data["py"]))
+        ddistance = np.sqrt(np.power(self.current_raw_robot_data["px"]-self.last_raw_robot_data["px"], 2)+np.power(
+            self.current_raw_robot_data["py"]-self.last_raw_robot_data["py"], 2))
         R = np.sin(dtheta/2)*ddistance/2
         dt = self.current_raw_robot_data["t"] - \
             self.last_raw_robot_data["t"]
@@ -324,7 +380,8 @@ class WheelEncoder:
 
         self.last_raw_robot_data = copy.deepcopy(
             self.current_raw_robot_data)
-        return self.real_wheel_data, self.noise_wheel_data
+        self.robot_queue.put(
+            ["encoder", self.real_wheel_data, self.noise_wheel_data])
 
 
 class OpticalFlow:
@@ -334,15 +391,18 @@ class OpticalFlow:
                            "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
     real_optical_data = {"dx": 0, "dy": 0}
     noise_optical_data = {"dx": 0, "dy": 0}
-    optcal_nosie = {"vr": [0, 0.5], "vl": [0, 0.5]}  # [mean,var]
+    optcal_nosie = {"dx": [0, 0.5], "dy": [0, 0.5]}  # [mean,var]
 
-    def __init__(self) -> None:
-        global world_sched
-        world_sched.enter(0.050, 2, self.generate_data)
+    def __init__(self, q_msg) -> None:
+        global sensor_timer
+        sensor_timer.enter(0.050, 2, self.generate_data)
+        self.robot_queue = q_msg
 
     def generate_data(self):
-        global raw_robot_data
-        world_sched.enter(0.050, 2, self.generate_data)
+        global raw_robot_data, stop_sensor_timer
+        if(stop_sensor_timer.value):
+            return
+        sensor_timer.enter(0.050, 2, self.generate_data)
         lock.acquire()
         for key in raw_robot_data.keys():
             self.current_raw_robot_data[key] = raw_robot_data[key][-1]
@@ -350,11 +410,14 @@ class OpticalFlow:
         if(self.last_raw_robot_data["t"] == 0):
             self.last_raw_robot_data = copy.deepcopy(
                 self.current_raw_robot_data)
+            return
+        if(self.current_raw_robot_data["t"]-self.last_raw_robot_data["t"] == 0):
+            return
         ####
         dtheta = self.current_raw_robot_data["theta"] - \
             self.last_raw_robot_data["theta"]
-        ddistance = np.sqrt(np.power(self.current_raw_robot_data["px"]-self.last_raw_robot_data["px"])+np.power(
-            self.current_raw_robot_data["py"]-self.last_raw_robot_data["py"]))
+        ddistance = np.sqrt(np.power(self.current_raw_robot_data["px"]-self.last_raw_robot_data["px"], 2)+np.power(
+            self.current_raw_robot_data["py"]-self.last_raw_robot_data["py"], 2))
         self.real_optical_data['dx'] = np.sin(dtheta)*ddistance
         self.real_optical_data['dy'] = np.cos(dtheta)*ddistance
 
@@ -367,7 +430,8 @@ class OpticalFlow:
         ####
         self.last_raw_robot_data = copy.deepcopy(
             self.current_raw_robot_data)
-        return self.real_optical_data, self.noise_optical_data
+        self.robot_queue.put(
+            ["optical", self.real_optical_data, self.noise_optical_data])
 
 
 class Datafusion:
