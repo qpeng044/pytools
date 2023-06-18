@@ -257,10 +257,13 @@ class Robot:
         sensor_timer.run()
 
     def StopRun(self):
+        print("stop robot")
         global stop_sensor_timer
         self.robot_run_start.value = 0
         stop_sensor_timer.value = 1
-
+        sensor_timer.cancel(imu_timer)
+        sensor_timer.cancel(encoder_timer)
+        sensor_timer.cancel(optical_timer)
         self.process.join()
         self.process.close()
 
@@ -292,15 +295,15 @@ class ImuSensor:
                       "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
 
     def __init__(self, q_msg) -> None:
-        global sensor_timer
-        sensor_timer.enter(0.010, 2, self.generate_data)
+        global sensor_timer, imu_timer
+        imu_timer = sensor_timer.enter(0.010, 2, self.generate_data)
         self.robot_queue = q_msg
 
     def generate_data(self):
-        global raw_robot_data, stop_sensor_timer
+        global raw_robot_data, stop_sensor_timer, imu_timer
         if(stop_sensor_timer.value):
             return
-        sensor_timer.enter(0.010, 2, self.generate_data)
+        imu_timer = sensor_timer.enter(0.010, 2, self.generate_data)
         lock.acquire()
         for key in raw_robot_data.keys():
             self.current_raw_robot_data[key] = raw_robot_data[key][-1]
@@ -342,15 +345,15 @@ class WheelEncoder:
     encoder_nosie = {"vr": [0, 0.01], "vl": [0, 0.01]}  # [mean,var]
 
     def __init__(self, q_msg) -> None:
-        global sensor_timer
-        sensor_timer.enter(0.050, 2, self.generate_data)
+        global sensor_timer, encoder_timer
+        encoder_timer = sensor_timer.enter(0.050, 2, self.generate_data)
         self.robot_queue = q_msg
 
     def generate_data(self):
-        global raw_robot_data, stop_sensor_timer
+        global raw_robot_data, stop_sensor_timer, encoder_timer
         if(stop_sensor_timer.value):
             return
-        sensor_timer.enter(0.050, 2, self.generate_data)
+        encoder_timer = sensor_timer.enter(0.050, 2, self.generate_data)
         lock.acquire()
         for key in raw_robot_data.keys():
             self.current_raw_robot_data[key] = raw_robot_data[key][-1]
@@ -394,15 +397,15 @@ class OpticalFlow:
     optcal_nosie = {"dx": [0, 0.5], "dy": [0, 0.5]}  # [mean,var]
 
     def __init__(self, q_msg) -> None:
-        global sensor_timer
-        sensor_timer.enter(0.050, 2, self.generate_data)
+        global sensor_timer, optical_timer
+        optical_timer = sensor_timer.enter(0.050, 2, self.generate_data)
         self.robot_queue = q_msg
 
     def generate_data(self):
-        global raw_robot_data, stop_sensor_timer
+        global raw_robot_data, stop_sensor_timer, optical_timer
         if(stop_sensor_timer.value):
             return
-        sensor_timer.enter(0.050, 2, self.generate_data)
+        optical_timer = sensor_timer.enter(0.050, 2, self.generate_data)
         lock.acquire()
         for key in raw_robot_data.keys():
             self.current_raw_robot_data[key] = raw_robot_data[key][-1]
