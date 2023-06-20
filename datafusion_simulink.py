@@ -21,7 +21,7 @@ current_pose_index = 0
 robot_max_acc = 0.1
 robot_max_speed = 0.5
 robot_max_yaw_rate = 0.5
-robot_max_yaw_acc = 0.5
+robot_max_yaw_w = 0.5
 lock = threading.RLock()
 
 # robot coeff
@@ -68,23 +68,32 @@ def GenerationData(is_start_simulation, generation_queue, app_queue):
         if(key_press_status["d"] == 1 and key_press_status["a"] == 1):
             dtheta = 0
         elif(key_press_status["a"] == 1):
-            dtheta = robot_max_yaw_acc*dt
+            dtheta = robot_max_yaw_w*dt
         elif key_press_status["d"] == 1:
-            dtheta = -robot_max_yaw_acc*dt
+            dtheta = -robot_max_yaw_w*dt
         else:
             dtheta = 0
         control_robot_position_data["theta"] = (
             control_robot_position_data_last["theta"]+dtheta)
-
-    # #######################px,py###################################
-        vx = control_robot_position_data["v"] * \
-            np.cos(control_robot_position_data["theta"])
-        vy = control_robot_position_data["v"] * \
-            np.sin(control_robot_position_data["theta"])
-        control_robot_position_data["px"] = (
-            control_robot_position_data_last["px"]+vx*dt)
-        control_robot_position_data["py"] = (
-            control_robot_position_data_last["py"]+vy*dt)
+        if(dtheta != 0):
+            r = control_robot_position_data["v"]/robot_max_yaw_w
+            d = 2*r*np.sin(abs(dtheta)/2)
+            dx = d*np.cos(control_robot_position_data_last["theta"]+dtheta/2)
+            dy = d*np.sin(control_robot_position_data_last["theta"]+dtheta/2)
+            control_robot_position_data["px"] = (
+                control_robot_position_data_last["px"]+dx)
+            control_robot_position_data["py"] = (
+                control_robot_position_data_last["py"]+dy)
+        else:
+            # #######################px,py###################################
+            vx = control_robot_position_data["v"] * \
+                np.cos(control_robot_position_data["theta"])
+            vy = control_robot_position_data["v"] * \
+                np.sin(control_robot_position_data["theta"])
+            control_robot_position_data["px"] = (
+                control_robot_position_data_last["px"]+vx*dt)
+            control_robot_position_data["py"] = (
+                control_robot_position_data_last["py"]+vy*dt)
         # print(f"end time:{time.time()}")
         # if(counter % 100 == 0):
         #     counter = 0
@@ -117,7 +126,7 @@ class App:
     def Gui(self):
         global raw_robot_data
         dpg.create_context()
-        dpg.create_viewport(title='数据融合', width=600, height=400)
+        dpg.create_viewport(title='数据融合', width=600, height=600)
         dpg.setup_dearpygui()
         with dpg.font_registry():
             with dpg.font(r"ZiTiGuanJiaFangSongTi-2.ttf", 15) as default_font:
@@ -191,10 +200,17 @@ class App:
                 lock.release()
                 dpg.set_value("raw_path",
                               [raw_robot_data["px"], raw_robot_data["py"]])
-                dpg.set_axis_limits("simulink_plot_x_axis", min(
-                    raw_robot_data["px"])-pad, max(raw_robot_data["px"])+pad)
-                dpg.set_axis_limits("simulink_plot_y_axis", min(
-                    raw_robot_data["py"])-pad, max(raw_robot_data["py"])+pad)
+
+                min_value = min(min(
+                    raw_robot_data["px"])-pad, min(
+                    raw_robot_data["py"])-pad)
+                max_value = max(max(
+                    raw_robot_data["px"])+pad, max(
+                    raw_robot_data["py"])+pad)
+                dpg.set_axis_limits("simulink_plot_x_axis",
+                                    min_value, max_value)
+                dpg.set_axis_limits("simulink_plot_y_axis",
+                                    min_value, max_value)
             if(not algo_res_queue.empty()):
                 temp_data = algo_res_queue.get()
                 # print(f"get algo data{temp_data}")
@@ -306,7 +322,7 @@ class ImuSensor:
                            "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
     real_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
                      "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
-    imu_nosie = {"ax_n": [0, 0.01], "ay_n": [0, 0.1], "az_n": [0, 0.1], "wx_n": [
+    imu_nosie = {"ax_n": [0, 0.01], "ay_n": [0, 0.01], "az_n": [0, 0.1], "wx_n": [
         0, 0.01], "wy_n": [0, 0.01], "wz_n": [0, 0.001]}  # [mean,var]
     noise_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
                       "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
@@ -329,16 +345,26 @@ class ImuSensor:
             self.last_raw_robot_data = copy.deepcopy(
                 self.current_raw_robot_data)
             return
-        if(self.current_raw_robot_data["t"]-self.last_raw_robot_data["t"] == 0):
+        dt = self.current_raw_robot_data["t"]-self.last_raw_robot_data["t"]
+        if(dt == 0):
             return
         #####
-        self.real_imu_data["ax"] = (self.current_raw_robot_data["v"]-self.last_raw_robot_data["v"]) / (
-            self.current_raw_robot_data["t"]-self.last_raw_robot_data["t"])
-        self.real_imu_data["wz"] = (self.current_raw_robot_data["theta"]-self.last_raw_robot_data["theta"]) / (
-            self.current_raw_robot_data["t"]-self.last_raw_robot_data["t"])
+        rotation_matrix = np.array([[np.cos(self.last_raw_robot_data["theta"]), -np.sin(
+            self.last_raw_robot_data["theta"]), self.last_raw_robot_data["px"]], [np.sin(self.last_raw_robot_data["theta"]), np.cos(
+                self.last_raw_robot_data["theta"]), self.last_raw_robot_data["py"]], [0, 0, 1]])
+        pos_on_last_coordinate = np.array(
+            [self.current_raw_robot_data["px"], self.current_raw_robot_data["py"], 1])@np.linalg.inv(rotation_matrix)
+        self.real_imu_data["ay"] = pos_on_last_coordinate[1]/dt
+        self.real_imu_data["ax"] = (
+            self.current_raw_robot_data["v"]-self.last_raw_robot_data["v"]) / dt
+        self.real_imu_data["wz"] = (
+            self.current_raw_robot_data["theta"]-self.last_raw_robot_data["theta"]) / dt
         self.noise_imu_data["ax"] = self.real_imu_data["ax"] + \
             np.random.normal(
                 loc=self.imu_nosie["ax_n"][0], scale=self.imu_nosie["ax_n"][1], size=None)
+        self.noise_imu_data["ay"] = self.real_imu_data["ay"] + \
+            np.random.normal(
+                loc=self.imu_nosie["ay_n"][0], scale=self.imu_nosie["ay_n"][1], size=None)
         self.noise_imu_data["wz"] = self.real_imu_data["wz"] + \
             np.random.normal(
                 loc=self.imu_nosie["wz_n"][0], scale=self.imu_nosie["wz_n"][1], size=None)
@@ -503,7 +529,7 @@ class Datafusion:
         # print(vxt, vyt, vt,theta_t)
         self.state_variable_current = np.array(
             [xt, yt, vt, theta_t, wt], dtype=np.float32)
-        print(imu_data)
+        # print(imu_data)
         state_jacobian_matrix = np.zeros(
             (self.state_variable_current.shape[0], self.state_variable_current.shape[0]))
         state_jacobian_matrix[0, 3] = dt*dt * \
