@@ -327,7 +327,7 @@ class ImuSensor:
         0, 0.01], "wy_n": [0, 0.01], "wz_n": [0, 0.001]}  # [mean,var]
     noise_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
                       "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
-    last_imu_state = {"vxhat": 0, "vyhat": 0}
+    last_imu_state = {"vxhat": 0, "vyhat": 0, "wt": 0}
 
     def __init__(self, q_msg) -> None:
         global sensor_timer, imu_timer
@@ -361,14 +361,24 @@ class ImuSensor:
             (self.current_raw_robot_data["py"]-self.last_raw_robot_data["py"]), 2))
         dtheta = self.current_raw_robot_data["theta"] - \
             self.last_raw_robot_data["theta"]
-        vyhat = dd*np.sin(dtheta/2)/dt
-        vxhat = dd*np.cos(dtheta/2)/dt
-        self.real_imu_data["ax"] = (vxhat-self.last_imu_state["vxhat"])/dt
-        self.real_imu_data["ay"] = (vyhat-self.last_imu_state['vyhat'])/dt
+        if(dtheta != 0):
+            R = dd/(2*np.sin(dtheta/2))
+            self.real_imu_data["ay"] = R*(dtheta/dt)**2
+            self.real_imu_data["ax"] = R * \
+                (dtheta/dt-self.last_imu_state["wt"])/dt
+            vxhat = R*dtheta/dt
+        else:
+            self.real_imu_data["ay"] = 0
+            self.real_imu_data["ax"] = dd/dt-self.last_imu_state["vxhat"]
+            vxhat = dd/dt
+        # vyhat = dd*np.sin(dtheta/2)/dt
+        # vxhat = dd*np.cos(dtheta/2)/dt
+        # self.real_imu_data["ax"] = (vxhat-self.last_imu_state["vxhat"])/dt
+        # self.real_imu_data["ay"] = (vyhat-self.last_imu_state['vyhat'])/dt
         self.last_imu_state["vxhat"] = vxhat
-        self.last_imu_state["vyhat"] = vyhat
-        print("dd:%f   dtheta:%f   vy:%f   vx:%f   ax:%f   ay:%f" % (dd, dtheta, vyhat, vxhat,
-              self.real_imu_data["ax"], self.real_imu_data["ay"]))
+        # self.last_imu_state["vyhat"] = vyhat
+        # print("dd:%f   dtheta:%f   vy:%f   vx:%f   ax:%f   ay:%f" % (dd, dtheta, vyhat, vxhat,
+        #       self.real_imu_data["ax"], self.real_imu_data["ay"]))
         # print(self.real_imu_data["ay"])
         # self.real_imu_data["ax"] = (
         #     self.current_raw_robot_data["v"]-self.last_raw_robot_data["v"]) / dt
@@ -503,9 +513,9 @@ class OpticalFlow:
 
 class Datafusion:
     state_variable_current = np.array(
-        [0, 0, 0, 0, 0]).reshape(-1, 1)  # [xt,yt,vt,thetat,wt]
+        [0, 0, 0, 0, 0, 0]).reshape(-1, 1)  # [xt,yt,vxt,vyt,thetat,wt]
     state_variable_last = np.array(
-        [0, 0, 0, 0, 0]).reshape(-1, 1)  # [xt-1,yt-1,vt-1,thetat-1,wt-1]
+        [0, 0, 0, 0, 0, 0]).reshape(-1, 1)  # [xt-1,yt-1,vxt-1,vyt-1,thetat-1,wt-1]
     last_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
                      "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
     last_optical_data = {"dx": 0, "dy": 0, "t": 0}
@@ -530,30 +540,31 @@ class Datafusion:
 
     def Predict(self, imu_data):
         dt = imu_data["t"]-self.last_imu_data["t"]
-        theta_t = self.state_variable_last[3]+self.last_imu_data["wz"]*dt
-        vxt_1 = self.state_variable_last[2]*np.cos(self.state_variable_last[3])
-        vyt_1 = self.state_variable_last[2]*np.sin(self.state_variable_last[3])
+        theta_t = self.state_variable_last[4]+self.last_imu_data["wz"]*dt
 
-        xt = self.state_variable_last[0]+vxt_1*dt+(
+        xt = self.state_variable_last[0]++self.state_variable_last[2]*dt+(
             np.cos(theta_t)*imu_data["ax"]+np.sin(theta_t)*imu_data["ay"])*np.power(dt, 2)/2
-        yt = self.state_variable_last[1]+vyt_1*dt+(
+        yt = self.state_variable_last[1]++self.state_variable_last[3]*dt+(
             np.sin(theta_t)*imu_data["ax"]+np.cos(theta_t)*imu_data["ay"])*np.power(dt, 2)/2
-        vt = np.sqrt(np.power(vxt_1+imu_data["ax"]*dt, 2)+np.power(
-            vyt_1+imu_data["ay"]*dt, 2))
+        vxt = imu_data["ax"]*np.cos(theta_t)*dt+imu_data["ay"] * \
+            np.cos(np.pi/2-theta_t)*dt+self.state_variable_last[2]
+        vyt = imu_data["ax"]*np.sin(theta_t)*dt+imu_data["ay"] * \
+            np.sin(np.pi/2-theta_t)*dt+self.state_variable_last[3]
         wt = imu_data["wz"]
-        # print(imu_data["ax"], imu_data["ay"], theta_t)
+        print("ax:%f   ay:%f   theta:%f    vx:%f    vy:%f" %
+              (imu_data["ax"], imu_data["ay"], theta_t, vxt, vyt))
         self.state_variable_current = np.array(
-            [xt, yt, vt, theta_t, wt], dtype=np.float32)
+            [xt, yt, vxt, vyt, theta_t, wt], dtype=np.float32)
         # print(imu_data)
-        state_jacobian_matrix = np.zeros(
-            (self.state_variable_current.shape[0], self.state_variable_current.shape[0]))
-        state_jacobian_matrix[0, 3] = dt*dt * \
-            (-imu_data["ax"]*np.sin(theta_t)+imu_data["ay"]*np.cos(theta_t))/2
-        state_jacobian_matrix[1, 3] = dt*dt * \
-            (imu_data["ax"]*np.cos(theta_t)-imu_data["ay"]*np.sin(theta_t))/2
-        state_jacobian_matrix[3, 4] = dt
-        state_jacobian_matrix[4, 4] = 1
-        self.Pt = state_jacobian_matrix@self.last_Pt@state_jacobian_matrix.T+self.Q
+        # state_jacobian_matrix = np.zeros(
+        #     (self.state_variable_current.shape[0], self.state_variable_current.shape[0]))
+        # state_jacobian_matrix[0, 3] = dt*dt * \
+        #     (-imu_data["ax"]*np.sin(theta_t)+imu_data["ay"]*np.cos(theta_t))/2
+        # state_jacobian_matrix[1, 3] = dt*dt * \
+        #     (imu_data["ax"]*np.cos(theta_t)-imu_data["ay"]*np.sin(theta_t))/2
+        # state_jacobian_matrix[3, 4] = dt
+        # state_jacobian_matrix[4, 4] = 1
+        # self.Pt = state_jacobian_matrix@self.last_Pt@state_jacobian_matrix.T+self.Q
         self.last_imu_data = copy.deepcopy(imu_data)
         self.state_variable_last = copy.deepcopy(self.state_variable_current)
         return self.state_variable_current
