@@ -84,6 +84,7 @@ def GenerationData(is_start_simulation, generation_queue, app_queue):
                 control_robot_position_data_last["px"]+dx)
             control_robot_position_data["py"] = (
                 control_robot_position_data_last["py"]+dy)
+            # print(control_robot_position_data["theta"])
         else:
             # #######################px,py###################################
             vx = control_robot_position_data["v"] * \
@@ -187,8 +188,7 @@ class App:
         generation_queue.put(self.key_press_status)
         # print(
         #     f'a:{self.key_press_status["a"]},w:{self.key_press_status["w"]},d:{self.key_press_status["d"]},s:{self.key_press_status["s"]}')
-        if(self.frame_counter % 10 == 0):
-            self.frame_counter = 0
+        if(self.frame_counter % 5 == 0):
             pad = 2
             if(not app_queue.empty()):
                 temp_data = app_queue.get()
@@ -200,17 +200,18 @@ class App:
                 lock.release()
                 dpg.set_value("raw_path",
                               [raw_robot_data["px"], raw_robot_data["py"]])
-
-                min_value = min(min(
-                    raw_robot_data["px"])-pad, min(
-                    raw_robot_data["py"])-pad)
-                max_value = max(max(
-                    raw_robot_data["px"])+pad, max(
-                    raw_robot_data["py"])+pad)
-                dpg.set_axis_limits("simulink_plot_x_axis",
-                                    min_value, max_value)
-                dpg.set_axis_limits("simulink_plot_y_axis",
-                                    min_value, max_value)
+                if(self.frame_counter % 50 == 0):
+                    self.frame_counter = 0
+                    min_value = min([min(
+                        raw_robot_data["px"])-pad, min(
+                        raw_robot_data["py"])-pad, min(self.ekf_path["x"])-pad, min(self.ekf_path["y"])-pad])
+                    max_value = max([max(
+                        raw_robot_data["px"])+pad, max(
+                        raw_robot_data["py"])+pad, max(self.ekf_path['y'])+pad, max(self.ekf_path['x'])+pad])
+                    dpg.set_axis_limits("simulink_plot_x_axis",
+                                        min_value, max_value)
+                    dpg.set_axis_limits("simulink_plot_y_axis",
+                                        min_value, max_value)
             if(not algo_res_queue.empty()):
                 temp_data = algo_res_queue.get()
                 # print(f"get algo data{temp_data}")
@@ -326,6 +327,7 @@ class ImuSensor:
         0, 0.01], "wy_n": [0, 0.01], "wz_n": [0, 0.001]}  # [mean,var]
     noise_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
                       "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
+    last_imu_state = {"vxhat": 0, "vyhat": 0}
 
     def __init__(self, q_msg) -> None:
         global sensor_timer, imu_timer
@@ -349,14 +351,27 @@ class ImuSensor:
         if(dt == 0):
             return
         #####
-        rotation_matrix = np.array([[np.cos(self.last_raw_robot_data["theta"]), -np.sin(
-            self.last_raw_robot_data["theta"]), self.last_raw_robot_data["px"]], [np.sin(self.last_raw_robot_data["theta"]), np.cos(
-                self.last_raw_robot_data["theta"]), self.last_raw_robot_data["py"]], [0, 0, 1]])
-        pos_on_last_coordinate = np.array(
-            [self.current_raw_robot_data["px"], self.current_raw_robot_data["py"], 1])@np.linalg.inv(rotation_matrix)
-        self.real_imu_data["ay"] = pos_on_last_coordinate[1]/dt
-        self.real_imu_data["ax"] = (
-            self.current_raw_robot_data["v"]-self.last_raw_robot_data["v"]) / dt
+        # rotation_matrix = np.array([[np.cos(self.last_raw_robot_data["theta"]), -np.sin(
+        #     self.last_raw_robot_data["theta"]), self.last_raw_robot_data["px"]], [np.sin(self.last_raw_robot_data["theta"]), np.cos(
+        #         self.last_raw_robot_data["theta"]), self.last_raw_robot_data["py"]], [0, 0, 1]])
+        # pos_on_last_coordinate = np.linalg.inv(rotation_matrix) @ np.array(
+        #     [self.current_raw_robot_data["px"], self.current_raw_robot_data["py"], 1])
+        # self.real_imu_data["ay"] = pos_on_last_coordinate[1]/dt
+        dd = np.sqrt(np.power((self.current_raw_robot_data["px"]-self.last_raw_robot_data["px"]), 2)+np.power(
+            (self.current_raw_robot_data["py"]-self.last_raw_robot_data["py"]), 2))
+        dtheta = self.current_raw_robot_data["theta"] - \
+            self.last_raw_robot_data["theta"]
+        vyhat = dd*np.sin(dtheta/2)/dt
+        vxhat = dd*np.cos(dtheta/2)/dt
+        self.real_imu_data["ax"] = (vxhat-self.last_imu_state["vxhat"])/dt
+        self.real_imu_data["ay"] = (vyhat-self.last_imu_state['vyhat'])/dt
+        self.last_imu_state["vxhat"] = vxhat
+        self.last_imu_state["vyhat"] = vyhat
+        print("dd:%f   dtheta:%f   vy:%f   vx:%f   ax:%f   ay:%f" % (dd, dtheta, vyhat, vxhat,
+              self.real_imu_data["ax"], self.real_imu_data["ay"]))
+        # print(self.real_imu_data["ay"])
+        # self.real_imu_data["ax"] = (
+        #     self.current_raw_robot_data["v"]-self.last_raw_robot_data["v"]) / dt
         self.real_imu_data["wz"] = (
             self.current_raw_robot_data["theta"]-self.last_raw_robot_data["theta"]) / dt
         self.noise_imu_data["ax"] = self.real_imu_data["ax"] + \
@@ -515,18 +530,18 @@ class Datafusion:
 
     def Predict(self, imu_data):
         dt = imu_data["t"]-self.last_imu_data["t"]
-        theta_t = self.state_variable_last[4]+self.last_imu_data["wz"]*dt
-        vxt = self.state_variable_last[2]*np.cos(self.state_variable_last[3])
-        vyt = self.state_variable_last[2]*np.sin(self.state_variable_last[3])
+        theta_t = self.state_variable_last[3]+self.last_imu_data["wz"]*dt
+        vxt_1 = self.state_variable_last[2]*np.cos(self.state_variable_last[3])
+        vyt_1 = self.state_variable_last[2]*np.sin(self.state_variable_last[3])
 
-        xt = self.state_variable_last[0]+vxt*dt+(
+        xt = self.state_variable_last[0]+vxt_1*dt+(
             np.cos(theta_t)*imu_data["ax"]+np.sin(theta_t)*imu_data["ay"])*np.power(dt, 2)/2
-        yt = self.state_variable_last[0]+vyt*dt+(
+        yt = self.state_variable_last[1]+vyt_1*dt+(
             np.sin(theta_t)*imu_data["ax"]+np.cos(theta_t)*imu_data["ay"])*np.power(dt, 2)/2
-        vt = np.sqrt(np.power(vxt+imu_data["ax"]*dt, 2)+np.power(
-            vyt+imu_data["ay"]*dt, 2))
+        vt = np.sqrt(np.power(vxt_1+imu_data["ax"]*dt, 2)+np.power(
+            vyt_1+imu_data["ay"]*dt, 2))
         wt = imu_data["wz"]
-        # print(vxt, vyt, vt,theta_t)
+        # print(imu_data["ax"], imu_data["ay"], theta_t)
         self.state_variable_current = np.array(
             [xt, yt, vt, theta_t, wt], dtype=np.float32)
         # print(imu_data)
@@ -540,6 +555,7 @@ class Datafusion:
         state_jacobian_matrix[4, 4] = 1
         self.Pt = state_jacobian_matrix@self.last_Pt@state_jacobian_matrix.T+self.Q
         self.last_imu_data = copy.deepcopy(imu_data)
+        self.state_variable_last = copy.deepcopy(self.state_variable_current)
         return self.state_variable_current
 
     def Update(self, sensor_data, sensor_type):
@@ -561,9 +577,7 @@ class Datafusion:
         self.state_variable_current = self.state_variable_current + \
             kalman_gain@(sensor_data_array-H@self.state_variable_current)
         self.Pt = self.Pt-kalman_gain@H@self.Pt
-
         self.last_Pt = copy.deepcopy(self.Pt)
-        self.state_variable_last = copy.deepcopy(self.state_variable_current)
         if(sensor_type == "encoder"):
             self.last_wheel_data = copy.deepcopy(sensor_data)
         elif(sensor_type == "optical"):
