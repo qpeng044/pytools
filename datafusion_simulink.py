@@ -24,17 +24,19 @@ robot_max_yaw_rate = 0.5
 robot_max_yaw_w = 0.5
 lock = threading.RLock()
 
-# robot coeff
+# robot coeffw
 distance_center_to_wheel = 0.1
 wheel_radius = 0.05
 
 
 is_start_simulation = Value('i', 0)
 generation_queue = Queue(10)
-app_queue = Queue(1)
+app_queue = Queue(2)
+control_robot_position_data_dict = Manager().dict({"px": 0, "py": 0, "vr":
+                                                  0, "vl": 0, "v": 0, "theta": 0, "t": 0})
 
 
-def GenerationData(is_start_simulation, generation_queue, app_queue):
+def GenerationData(is_start_simulation, generation_queue, app_queue, data_dict):
     counter = 0
     key_press_status = {"a": 0, "w": 0, "s": 0, "d": 0}
     control_robot_position_data = {"px": 0, "py": 0, "vr":
@@ -45,7 +47,7 @@ def GenerationData(is_start_simulation, generation_queue, app_queue):
     while(is_start_simulation.value):
         if(not generation_queue.empty()):
             key_press_status = generation_queue.get()
-        # time.sleep(0.001)
+        time.sleep(0.01)
         control_robot_position_data["t"] = (time.time())
         dt = control_robot_position_data["t"] - \
             control_robot_position_data_last["t"]
@@ -105,12 +107,14 @@ def GenerationData(is_start_simulation, generation_queue, app_queue):
         # print(f'a:{key_press_status["a"]}')
         if not app_queue.full():
             app_queue.put(control_robot_position_data)
+        else:
+            app_queue.get()
+        for key in control_robot_position_data.keys():
+            data_dict[key] = control_robot_position_data[key]
         control_robot_position_data_last = copy.deepcopy(
             control_robot_position_data)
-
-
-raw_robot_data = {"px": [0], "py": [0], "vr": [
-    0], "vl": [0], "v": [0], "theta": [0], "t": [0]}
+        # print(control_robot_position_data_last)
+        # print(data_dict)
 
 
 class App:
@@ -118,14 +122,14 @@ class App:
     frame_counter = 0
     key_press_status = {"a": 0, "w": 0, "s": 0, "d": 0}
     ekf_path = {"x": [0], "y": [0], "speed": [0], "direction": [0]}
+    plot_raw_robot_data = {"px": [0], "py": [0], "vr": [0],
+                           "vl": [0], "v": [0], "theta": [0], "t": [0]}
 
     def __init__(self) -> None:
-        word_simulink = WorldCoordinate()
         self.robot = Robot()
         self.Gui()
 
     def Gui(self):
-        global raw_robot_data
         dpg.create_context()
         dpg.create_viewport(title='数据融合', width=600, height=600)
         dpg.setup_dearpygui()
@@ -150,7 +154,7 @@ class App:
                 dpg.add_plot_axis(dpg.mvYAxis, label="y",
                                   tag=f"simulink_plot_y_axis")
                 dpg.add_line_series(
-                    x=raw_robot_data["px"], y=raw_robot_data["py"], tag="raw_path", parent=f"simulink_plot_y_axis")
+                    x=self.plot_raw_robot_data["px"], y=self.plot_raw_robot_data["py"], tag="raw_path", parent=f"simulink_plot_y_axis")
                 dpg.add_line_series(
                     x=self.ekf_path["x"], y=self.ekf_path["y"], tag="EKF_path", parent=f"simulink_plot_y_axis")
         dpg.set_viewport_resize_callback(self.viewport_resize_callback)
@@ -165,8 +169,9 @@ class App:
         dpg.destroy_context()
 
     def FrameCallback(self):
-        global is_start_simulation, raw_robot_data, algo_res_queue
+        global is_start_simulation, algo_res_queue, app_queue
         self.frame_counter += 1
+        # print(is_start_simulation.value)
         if(is_start_simulation.value == 0):
             return
         if dpg.is_key_down(key=dpg.mvKey_W):
@@ -186,46 +191,44 @@ class App:
         else:
             self.key_press_status["d"] = 0
         generation_queue.put(self.key_press_status)
+        if(not app_queue.empty()):
+            temp_data = app_queue.get()
+            for key in self.plot_raw_robot_data.keys():
+                self.plot_raw_robot_data[key].append(
+                    temp_data[key])
+        if(not algo_res_queue.empty()):
+            temp_data = algo_res_queue.get()
+            # print(f"get algo data{temp_data}")
+            self.ekf_path["x"].append(temp_data[0])
+            self.ekf_path["y"].append(temp_data[1])
         # print(
         #     f'a:{self.key_press_status["a"]},w:{self.key_press_status["w"]},d:{self.key_press_status["d"]},s:{self.key_press_status["s"]}')
-        if(self.frame_counter % 5 == 0):
+        if(self.frame_counter % 2 == 0):
             pad = 2
-            if(not app_queue.empty()):
-                temp_data = app_queue.get()
-                # print(f"get pose data{temp_data}")
-                lock.acquire()
-                for key in raw_robot_data.keys():
-                    raw_robot_data[key].append(
-                        temp_data[key])
-                lock.release()
-                dpg.set_value("raw_path",
-                              [raw_robot_data["px"], raw_robot_data["py"]])
-                if(self.frame_counter % 50 == 0):
-                    self.frame_counter = 0
-                    min_value = min([min(
-                        raw_robot_data["px"])-pad, min(
-                        raw_robot_data["py"])-pad, min(self.ekf_path["x"])-pad, min(self.ekf_path["y"])-pad])
-                    max_value = max([max(
-                        raw_robot_data["px"])+pad, max(
-                        raw_robot_data["py"])+pad, max(self.ekf_path['y'])+pad, max(self.ekf_path['x'])+pad])
-                    dpg.set_axis_limits("simulink_plot_x_axis",
-                                        min_value, max_value)
-                    dpg.set_axis_limits("simulink_plot_y_axis",
-                                        min_value, max_value)
-            if(not algo_res_queue.empty()):
-                temp_data = algo_res_queue.get()
-                # print(f"get algo data{temp_data}")
-                self.ekf_path["x"].append(temp_data[0])
-                self.ekf_path["y"].append(temp_data[1])
+            # print(f"get pose data{temp_data}")
+            dpg.set_value("raw_path",
+                          [self.plot_raw_robot_data["px"], self.plot_raw_robot_data["py"]])
+            if(self.frame_counter % 10 == 0):
+                self.frame_counter = 0
+                min_value = min([min(
+                    self.plot_raw_robot_data["px"])-pad, min(
+                    self.plot_raw_robot_data["py"])-pad, min(self.ekf_path["x"])-pad, min(self.ekf_path["y"])-pad])
+                max_value = max([max(
+                    self.plot_raw_robot_data["px"])+pad, max(
+                    self.plot_raw_robot_data["py"])+pad, max(self.ekf_path['y'])+pad, max(self.ekf_path['x'])+pad])
+                dpg.set_axis_limits("simulink_plot_x_axis",
+                                    min_value, max_value)
+                dpg.set_axis_limits("simulink_plot_y_axis",
+                                    min_value, max_value)
                 dpg.set_value(
                     "EKF_path", [self.ekf_path["x"], self.ekf_path["y"]])
 
     def StartSimulation(self, sender, appdata):
-        global is_start_simulation, generation_queue, app_queue
+        global is_start_simulation, generation_queue, app_queue, control_robot_position_data_dict
         print("start sched")
         is_start_simulation.value = 1
         self.process = Process(target=GenerationData,
-                               args=(is_start_simulation, generation_queue, app_queue,))
+                               args=(is_start_simulation, generation_queue, app_queue, control_robot_position_data_dict,))
         self.process.start()
         self.robot.StartRun()
 
@@ -299,6 +302,7 @@ class Robot:
 
     def RobotAlgo(self, status, recv_queue, send_queue):
         state_variable = [0, 0, 0, 0, 0]
+        print("algo")
         while(status.value):
             if(recv_queue.empty()):
                 time.sleep(0.001)
@@ -335,13 +339,13 @@ class ImuSensor:
         self.robot_queue = q_msg
 
     def generate_data(self):
-        global raw_robot_data, stop_sensor_timer, imu_timer
+        global control_robot_position_data_dict, stop_sensor_timer, imu_timer
         if(stop_sensor_timer.value):
             return
         imu_timer = sensor_timer.enter(0.010, 2, self.generate_data)
         lock.acquire()
-        for key in raw_robot_data.keys():
-            self.current_raw_robot_data[key] = raw_robot_data[key][-1]
+        for key in control_robot_position_data_dict.keys():
+            self.current_raw_robot_data[key] = control_robot_position_data_dict[key]
         lock.release()
         if(self.last_raw_robot_data["t"] == 0):
             self.last_raw_robot_data = copy.deepcopy(
@@ -419,13 +423,13 @@ class WheelEncoder:
         self.robot_queue = q_msg
 
     def generate_data(self):
-        global raw_robot_data, stop_sensor_timer, encoder_timer
+        global control_robot_position_data_dict, stop_sensor_timer, encoder_timer
         if(stop_sensor_timer.value):
             return
         encoder_timer = sensor_timer.enter(0.050, 2, self.generate_data)
         lock.acquire()
-        for key in raw_robot_data.keys():
-            self.current_raw_robot_data[key] = raw_robot_data[key][-1]
+        for key in control_robot_position_data_dict.keys():
+            self.current_raw_robot_data[key] = control_robot_position_data_dict[key]
         lock.release()
         if(self.last_raw_robot_data["t"] == 0):
             self.last_raw_robot_data = copy.deepcopy(
@@ -472,13 +476,13 @@ class OpticalFlow:
         self.robot_queue = q_msg
 
     def generate_data(self):
-        global raw_robot_data, stop_sensor_timer, optical_timer
+        global control_robot_position_data_dict, stop_sensor_timer, optical_timer
         if(stop_sensor_timer.value):
             return
         optical_timer = sensor_timer.enter(0.050, 2, self.generate_data)
         lock.acquire()
-        for key in raw_robot_data.keys():
-            self.current_raw_robot_data[key] = raw_robot_data[key][-1]
+        for key in control_robot_position_data_dict.keys():
+            self.current_raw_robot_data[key] = control_robot_position_data_dict[key]
         lock.release()
         if(self.last_raw_robot_data["t"] == 0):
             self.last_raw_robot_data = copy.deepcopy(
@@ -597,4 +601,10 @@ class Datafusion:
 
 
 if __name__ == "__main__":
+    # is_start_simulation.value = 1
+    # process = Process(target=GenerationData,
+    #                   args=(is_start_simulation, generation_queue, app_queue,))
+    # process.start()
     app = App()
+    # gui = Process(target=app.Gui)
+    # gui.start()
