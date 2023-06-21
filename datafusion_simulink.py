@@ -366,11 +366,12 @@ class ImuSensor:
         dtheta = self.current_raw_robot_data["theta"] - \
             self.last_raw_robot_data["theta"]
         if(dtheta != 0):
-            R = dd/(2*np.sin(dtheta/2))
+            R = dd/(dtheta/2)
             self.real_imu_data["ay"] = R*(dtheta/dt)**2
-            self.real_imu_data["ax"] = R * \
-                (dtheta/dt-self.last_imu_state["wt"])/dt
+            self.real_imu_data["ax"] = R * (dtheta/dt)/dt
             vxhat = R*dtheta/dt
+            print("dd:%f   dtheta:%f   R:%f   ax:%f   ay:%f" % (dd, dtheta,
+                                                                R,  self.real_imu_data["ax"], self.real_imu_data["ay"]))
         else:
             self.real_imu_data["ay"] = 0
             self.real_imu_data["ax"] = dd/dt-self.last_imu_state["vxhat"]
@@ -381,8 +382,7 @@ class ImuSensor:
         # self.real_imu_data["ay"] = (vyhat-self.last_imu_state['vyhat'])/dt
         self.last_imu_state["vxhat"] = vxhat
         # self.last_imu_state["vyhat"] = vyhat
-        # print("dd:%f   dtheta:%f   vy:%f   vx:%f   ax:%f   ay:%f" % (dd, dtheta, vyhat, vxhat,
-        #       self.real_imu_data["ax"], self.real_imu_data["ay"]))
+
         # print(self.real_imu_data["ay"])
         # self.real_imu_data["ax"] = (
         #     self.current_raw_robot_data["v"]-self.last_raw_robot_data["v"]) / dt
@@ -555,8 +555,8 @@ class Datafusion:
         vyt = imu_data["ax"]*np.sin(theta_t)*dt+imu_data["ay"] * \
             np.sin(np.pi/2-theta_t)*dt+self.state_variable_last[3]
         wt = imu_data["wz"]
-        print("ax:%f   ay:%f   theta:%f    vx:%f    vy:%f" %
-              (imu_data["ax"], imu_data["ay"], theta_t, vxt, vyt))
+        # print("ax:%f   ay:%f   theta:%f    vx:%f    vy:%f" %
+        #       (imu_data["ax"], imu_data["ay"], theta_t, vxt, vyt))
         self.state_variable_current = np.array(
             [xt, yt, vxt, vyt, theta_t, wt], dtype=np.float32)
         # print(imu_data)
