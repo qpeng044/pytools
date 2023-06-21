@@ -318,7 +318,6 @@ class Robot:
             #     state_variable = self.data_fusion.Update(
             #         sensor_data[1], "optical")
             send_queue.put(state_variable_predict)
-            print(state_variable_predict)
 
 
 class ImuSensor:
