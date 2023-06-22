@@ -18,7 +18,7 @@ motion_start_time = time.time()
 
 sensor_timer_event = None
 current_pose_index = 0
-robot_max_acc = 0.1
+robot_max_acc = 0.5
 robot_max_speed = 0.5
 robot_max_yaw_rate = 0.5
 robot_max_yaw_w = 0.5
@@ -32,8 +32,6 @@ wheel_radius = 0.05
 is_start_simulation = Value('i', 0)
 generation_queue = Queue(10)
 app_queue = Queue(2)
-control_robot_position_data_dict = Manager().dict({"px": 0, "py": 0, "vr":
-                                                  0, "vl": 0, "v": 0, "theta": 0, "t": 0})
 
 
 def GenerationData(is_start_simulation, generation_queue, app_queue, data_dict):
@@ -42,7 +40,7 @@ def GenerationData(is_start_simulation, generation_queue, app_queue, data_dict):
     control_robot_position_data = {"px": 0, "py": 0, "vr":
                                    0, "vl": 0, "v": 0, "theta": 0, "t": 0}
     control_robot_position_data_last = {"px": 0, "py": 0, "vr":
-                                        0, "vl": 0, "v": 0, "theta": 0, "t": 0}
+                                        0, "vl": 0, "v": 0, "theta": 0, "ax": 0, "ay": 0, "t": 0}
     print(is_start_simulation.value)
     while(is_start_simulation.value):
         if(not generation_queue.empty()):
@@ -86,7 +84,25 @@ def GenerationData(is_start_simulation, generation_queue, app_queue, data_dict):
                 control_robot_position_data_last["px"]+dx)
             control_robot_position_data["py"] = (
                 control_robot_position_data_last["py"]+dy)
+            vx = control_robot_position_data["v"] * \
+                np.cos(control_robot_position_data["theta"])
+            vy = control_robot_position_data["v"] * \
+                np.sin(control_robot_position_data["theta"])
+            # control_robot_position_data["ax"] = (
+            #     dx-control_robot_position_data_last["v"]*np.cos(control_robot_position_data_last["theta"])*dt)*2/(dt*dt)
+            # control_robot_position_data["ay"] = (
+            #     dy-control_robot_position_data_last["v"]*np.sin(control_robot_position_data_last["theta"])*dt)*2/(dt*dt)
             # print(control_robot_position_data["theta"])
+            axo = (
+                vx-control_robot_position_data_last["v"]*np.cos(control_robot_position_data_last["theta"]))/(dt)
+            ayo = (
+                vy-control_robot_position_data_last["v"]*np.sin(control_robot_position_data_last["theta"]))/(dt)
+
+            control_robot_position_data["ax"] = np.cos(
+                control_robot_position_data["theta"])*axo+np.sin(control_robot_position_data["theta"])*ayo
+
+            control_robot_position_data["ay"] = np.cos(
+                control_robot_position_data["theta"])*ayo-np.sin(control_robot_position_data["theta"])*axo
         else:
             # #######################px,py###################################
             vx = control_robot_position_data["v"] * \
@@ -97,6 +113,17 @@ def GenerationData(is_start_simulation, generation_queue, app_queue, data_dict):
                 control_robot_position_data_last["px"]+vx*dt)
             control_robot_position_data["py"] = (
                 control_robot_position_data_last["py"]+vy*dt)
+            axo = (
+                vx-control_robot_position_data_last["v"]*np.cos(control_robot_position_data_last["theta"]))/(dt)
+            ayo = (
+                vy-control_robot_position_data_last["v"]*np.sin(control_robot_position_data_last["theta"]))/(dt)
+
+            control_robot_position_data["ax"] = np.cos(
+                control_robot_position_data["theta"])*axo+np.sin(control_robot_position_data["theta"])*ayo
+
+            control_robot_position_data["ay"] = np.cos(
+                control_robot_position_data["theta"])*ayo-np.sin(control_robot_position_data["theta"])*axo
+        # print("vx:%f   vy:%f    axo:%f   ayo:%f    theta:%f"%(vx,vy,axo,ayo,control_robot_position_data["theta"]))
         # print(f"end time:{time.time()}")
         # if(counter % 100 == 0):
         #     counter = 0
@@ -123,7 +150,7 @@ class App:
     key_press_status = {"a": 0, "w": 0, "s": 0, "d": 0}
     ekf_path = {"x": [0], "y": [0], "speed": [0], "direction": [0]}
     plot_raw_robot_data = {"px": [0], "py": [0], "vr": [0],
-                           "vl": [0], "v": [0], "theta": [0], "t": [0]}
+                           "vl": [0], "v": [0], "theta": [0], "ax": [0], "ay": [0], "t": [0]}
 
     def __init__(self) -> None:
         self.robot = Robot()
@@ -322,7 +349,7 @@ class Robot:
 
 class ImuSensor:
     current_raw_robot_data = {"px": 0, "py": 0,
-                              "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
+                              "vr": 0, "vl": 0, "v": 0, "theta": 0, "ax": 0, "ay": 0, "t": 0}
     last_raw_robot_data = {"px": 0, "py": 0,
                            "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
     real_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
@@ -366,16 +393,24 @@ class ImuSensor:
         dtheta = self.current_raw_robot_data["theta"] - \
             self.last_raw_robot_data["theta"]
         if(dtheta != 0):
-            R = dd/(dtheta/2)
-            self.real_imu_data["ay"] = R*(dtheta/dt)**2
-            self.real_imu_data["ax"] = R * (dtheta/dt)/dt
-            vxhat = R*dtheta/dt
-            print("dd:%f   dtheta:%f   R:%f   ax:%f   ay:%f" % (dd, dtheta,
-                                                                R,  self.real_imu_data["ax"], self.real_imu_data["ay"]))
+            w = dtheta/dt
+            R = dd/2/(dtheta/2)
+            # R = self.last_imu_state["vxhat"]/w
+            vxhat = R*w
+            # self.real_imu_data["ay"] = R*w*w
+            # self.real_imu_data["ax"] = R*w/dt
+            # print("vx:%f   dd:%f   axx:%f   ayy:%f   ax:%f   ay:%f" % (vxhat, dd, self.current_raw_robot_data["ax"],
+            #                                                            self.current_raw_robot_data["ay"],  self.real_imu_data["ax"], self.real_imu_data["ay"]))
         else:
-            self.real_imu_data["ay"] = 0
-            self.real_imu_data["ax"] = dd/dt-self.last_imu_state["vxhat"]
+            # self.real_imu_data["ay"] = 0
+            # self.real_imu_data["ax"] = (dd/dt-self.last_imu_state["vxhat"])/dt
             vxhat = dd/dt
+        self.real_imu_data["ay"] = self.current_raw_robot_data["ay"]
+        self.real_imu_data["ax"] = self.current_raw_robot_data["ax"]
+        # print("vx:%f   dd:%f   axx:%f   ayy:%f   ax:%f   ay:%f" % (vxhat, dd, self.current_raw_robot_data["ax"],
+        #                                                            self.current_raw_robot_data["ay"],  self.real_imu_data["ax"], self.real_imu_data["ay"]))
+        # print("vx:%f   dtheta:%f  ax:%f   ay:%f" % (vxhat, dtheta,
+        #       self.real_imu_data["ax"], self.real_imu_data["ay"]))
         # vyhat = dd*np.sin(dtheta/2)/dt
         # vxhat = dd*np.cos(dtheta/2)/dt
         # self.real_imu_data["ax"] = (vxhat-self.last_imu_state["vxhat"])/dt
@@ -544,17 +579,20 @@ class Datafusion:
 
     def Predict(self, imu_data):
         dt = imu_data["t"]-self.last_imu_data["t"]
-        theta_t = self.state_variable_last[4]+self.last_imu_data["wz"]*dt
-
-        xt = self.state_variable_last[0]++self.state_variable_last[2]*dt+(
-            np.cos(theta_t)*imu_data["ax"]+np.sin(theta_t)*imu_data["ay"])*np.power(dt, 2)/2
-        yt = self.state_variable_last[1]++self.state_variable_last[3]*dt+(
-            np.sin(theta_t)*imu_data["ax"]+np.cos(theta_t)*imu_data["ay"])*np.power(dt, 2)/2
+        dtheta = self.last_imu_data["wz"]*dt
+        theta_t = self.state_variable_last[4]+dtheta
+        wt = imu_data["wz"]
+        # xt = self.state_variable_last[0]+self.state_variable_last[2]*dt+(
+        #     np.cos(theta_t)*imu_data["ax"]-np.sin(theta_t+np.pi/2)*imu_data["ay"])*dt*dt/2
+        # yt = self.state_variable_last[1]+self.state_variable_last[3]*dt+(
+        #     np.sin(theta_t)*imu_data["ax"]-np.cos(theta_t+np.pi/2)*imu_data["ay"])*dt*dt/2
         vxt = imu_data["ax"]*np.cos(theta_t)*dt+imu_data["ay"] * \
             np.cos(np.pi/2-theta_t)*dt+self.state_variable_last[2]
         vyt = imu_data["ax"]*np.sin(theta_t)*dt+imu_data["ay"] * \
             np.sin(np.pi/2-theta_t)*dt+self.state_variable_last[3]
-        wt = imu_data["wz"]
+        xt = self.state_variable_last[0]+(vxt+self.state_variable_last[2])*dt/2
+        yt = self.state_variable_last[1]+(vyt+self.state_variable_last[3])*dt/2
+
         # print("ax:%f   ay:%f   theta:%f    vx:%f    vy:%f" %
         #       (imu_data["ax"], imu_data["ay"], theta_t, vxt, vyt))
         self.state_variable_current = np.array(
@@ -601,6 +639,8 @@ class Datafusion:
 
 
 if __name__ == "__main__":
+    control_robot_position_data_dict = Manager().dict({"px": 0, "py": 0, "vr":
+                                                       0, "vl": 0, "v": 0, "theta": 0, "ax": 0, "ay": 0, "t": 0})
     # is_start_simulation.value = 1
     # process = Process(target=GenerationData,
     #                   args=(is_start_simulation, generation_queue, app_queue,))
