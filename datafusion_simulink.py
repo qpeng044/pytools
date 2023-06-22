@@ -75,6 +75,10 @@ def GenerationData(is_start_simulation, generation_queue, app_queue, data_dict):
             dtheta = 0
         control_robot_position_data["theta"] = (
             control_robot_position_data_last["theta"]+dtheta)
+        vx = control_robot_position_data["v"] * \
+            np.cos(control_robot_position_data["theta"])
+        vy = control_robot_position_data["v"] * \
+            np.sin(control_robot_position_data["theta"])
         if(dtheta != 0):
             r = control_robot_position_data["v"]/robot_max_yaw_w
             d = 2*r*np.sin(abs(dtheta)/2)
@@ -84,54 +88,24 @@ def GenerationData(is_start_simulation, generation_queue, app_queue, data_dict):
                 control_robot_position_data_last["px"]+dx)
             control_robot_position_data["py"] = (
                 control_robot_position_data_last["py"]+dy)
-            vx = control_robot_position_data["v"] * \
-                np.cos(control_robot_position_data["theta"])
-            vy = control_robot_position_data["v"] * \
-                np.sin(control_robot_position_data["theta"])
-            # control_robot_position_data["ax"] = (
-            #     dx-control_robot_position_data_last["v"]*np.cos(control_robot_position_data_last["theta"])*dt)*2/(dt*dt)
-            # control_robot_position_data["ay"] = (
-            #     dy-control_robot_position_data_last["v"]*np.sin(control_robot_position_data_last["theta"])*dt)*2/(dt*dt)
-            # print(control_robot_position_data["theta"])
-            axo = (
-                vx-control_robot_position_data_last["v"]*np.cos(control_robot_position_data_last["theta"]))/(dt)
-            ayo = (
-                vy-control_robot_position_data_last["v"]*np.sin(control_robot_position_data_last["theta"]))/(dt)
-
-            control_robot_position_data["ax"] = np.cos(
-                control_robot_position_data["theta"])*axo+np.sin(control_robot_position_data["theta"])*ayo
-
-            control_robot_position_data["ay"] = np.cos(
-                control_robot_position_data["theta"])*ayo-np.sin(control_robot_position_data["theta"])*axo
         else:
             # #######################px,py###################################
-            vx = control_robot_position_data["v"] * \
-                np.cos(control_robot_position_data["theta"])
-            vy = control_robot_position_data["v"] * \
-                np.sin(control_robot_position_data["theta"])
             control_robot_position_data["px"] = (
                 control_robot_position_data_last["px"]+vx*dt)
             control_robot_position_data["py"] = (
                 control_robot_position_data_last["py"]+vy*dt)
-            axo = (
-                vx-control_robot_position_data_last["v"]*np.cos(control_robot_position_data_last["theta"]))/(dt)
-            ayo = (
-                vy-control_robot_position_data_last["v"]*np.sin(control_robot_position_data_last["theta"]))/(dt)
 
-            control_robot_position_data["ax"] = np.cos(
-                control_robot_position_data["theta"])*axo+np.sin(control_robot_position_data["theta"])*ayo
+        axo = (
+            vx-control_robot_position_data_last["v"]*np.cos(control_robot_position_data_last["theta"]))/(dt)
+        ayo = (
+            vy-control_robot_position_data_last["v"]*np.sin(control_robot_position_data_last["theta"]))/(dt)
 
-            control_robot_position_data["ay"] = np.cos(
-                control_robot_position_data["theta"])*ayo-np.sin(control_robot_position_data["theta"])*axo
+        control_robot_position_data["ax"] = np.cos(
+            control_robot_position_data["theta"])*axo+np.sin(control_robot_position_data["theta"])*ayo
+
+        control_robot_position_data["ay"] = np.cos(
+            control_robot_position_data["theta"])*ayo-np.sin(control_robot_position_data["theta"])*axo
         # print("vx:%f   vy:%f    axo:%f   ayo:%f    theta:%f  aximu:%f   ayimu:%f"%(vx,vy,axo,ayo,control_robot_position_data["theta"],control_robot_position_data["ax"],control_robot_position_data["ay"]))
-        # print(f"end time:{time.time()}")
-        # if(counter % 100 == 0):
-        #     counter = 0
-        #     # print(dv, control_robot_position_data["v"][-1],
-        #     #       dtheta, control_robot_position_data["theta"][-1])
-        #     print(control_robot_position_data["px"][-1],
-        #           control_robot_position_data["py"][-1])
-        # print(f'a:{key_press_status["a"]}')
         if not app_queue.full():
             app_queue.put(control_robot_position_data)
         else:
@@ -140,8 +114,7 @@ def GenerationData(is_start_simulation, generation_queue, app_queue, data_dict):
             data_dict[key] = control_robot_position_data[key]
         control_robot_position_data_last = copy.deepcopy(
             control_robot_position_data)
-        # print(control_robot_position_data_last)
-        # print(data_dict)
+
 
 
 class App:
