@@ -530,6 +530,29 @@ class Datafusion:
         self.H_optical = np.array([[0, 0, -1, 0, 0], [0, 0, 0, 0, 1/self.l]])
         self.H_encoder_jacobian = self.H_encoder
         self.H_optical_jacobian = self.H_optical
+    def check_real_data(self,sensor_data):
+        if(sensor_data[0]=="imu"):
+            imu_data=sensor_data[1]
+            dt = imu_data["t"]-self.last_imu_data["t"]
+            dtheta = self.last_imu_data["wz"]*dt
+            theta_t = self.state_variable_last[4]+dtheta
+            wt = imu_data["wz"]
+            vxt = imu_data["ax"]*np.cos(theta_t)*dt-imu_data["ay"] * \
+                np.cos(np.pi/2-theta_t)*dt+self.state_variable_last[2]
+            vyt = imu_data["ax"]*np.sin(theta_t)*dt+imu_data["ay"] * \
+                np.sin(np.pi/2-theta_t)*dt+self.state_variable_last[3]
+            xt = self.state_variable_last[0]+(vxt+self.state_variable_last[2])*dt/2
+            yt = self.state_variable_last[1]+(vyt+self.state_variable_last[3])*dt/2
+
+            print("ax:%f   ay:%f   theta:%f    vx:%f    vy:%f" %
+                (imu_data["ax"], imu_data["ay"], theta_t, vxt, vyt))
+            self.last_imu_data = copy.deepcopy(imu_data)
+            self.state_variable_last = copy.deepcopy(self.state_variable_current)
+            return self.state_variable_current
+        if(sensor_data[0]=="encoder"):
+            encoder_data=sensor_data[1]
+            
+            
 
     def Predict(self, imu_data):
         dt = imu_data["t"]-self.last_imu_data["t"]
