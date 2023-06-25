@@ -505,9 +505,9 @@ class OpticalFlow:
 
 class Datafusion:
     state_variable_current = np.array(
-        [0, 0, 0, 0, 0, 0]).reshape(-1, 1)  # [xt,yt,vxt,vyt,thetat,wt]
+        [0, 0, 0, 0, 0]).reshape(-1, 1)  # [xt,yt,vt,thetat,wt]
     state_variable_last = np.array(
-        [0, 0, 0, 0, 0, 0]).reshape(-1, 1)  # [xt-1,yt-1,vxt-1,vyt-1,thetat-1,wt-1]
+        [0, 0, 0, 0, 0]).reshape(-1, 1)  # [xt-1,vt,thetat-1,wt-1]
     last_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
                      "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
     last_optical_data = {"dx": 0, "dy": 0, "t": 0}
@@ -561,20 +561,24 @@ class Datafusion:
             return self.state_variable_current
         dt = imu_data["t"]-self.last_imu_data["t"]
         dtheta = self.last_imu_data["wz"]*dt
-        theta_t = self.state_variable_last[4]+dtheta
+        theta_t = self.state_variable_last[3]+dtheta
         wt = imu_data["wz"]
+        vxt_1 = self.state_variable_last[2] * \
+            np.cos(self.state_variable_last[3])
+        vyt_1 = self.state_variable_last[2] * \
+            np.sin(self.state_variable_last[3])
         vxt = imu_data["ax"]*np.cos(theta_t)*dt-imu_data["ay"] * \
-            np.cos(np.pi/2-theta_t)*dt+self.state_variable_last[2]
+            np.cos(np.pi/2-theta_t)*dt+vxt_1
         vyt = imu_data["ax"]*np.sin(theta_t)*dt+imu_data["ay"] * \
-            np.sin(np.pi/2-theta_t)*dt+self.state_variable_last[3]
-        # vt=np.sqrt(vxt*vxt+vyt*vyt)
-        xt = self.state_variable_last[0]+(vxt+self.state_variable_last[2])*dt/2
-        yt = self.state_variable_last[1]+(vyt+self.state_variable_last[3])*dt/2
+            np.sin(np.pi/2-theta_t)*dt+vyt_1
+        vt = np.sqrt(vxt*vxt+vyt*vyt)
+        xt = self.state_variable_last[0]+(vxt+vxt_1)*dt/2
+        yt = self.state_variable_last[1]+(vyt+vyt_1)*dt/2
 
-        print("x:%f   y:%f   ax:%f   ay:%f   theta:%f    vx:%f    vy:%f   dt%f" %
-              (xt, yt, imu_data["ax"], imu_data["ay"], theta_t, vxt, vyt, dt))
+        # print("x:%f   y:%f   ax:%f   ay:%f   theta:%f    vx:%f    vy:%f   dt%f" %
+        #       (xt, yt, imu_data["ax"], imu_data["ay"], theta_t, vxt, vyt, dt))
         self.state_variable_current = np.array(
-            [xt, yt, vxt, vyt, theta_t, wt], dtype=np.float32)
+            [xt, yt, vt, theta_t, wt], dtype=np.float32)
         # print(imu_data)
         # state_jacobian_matrix = np.zeros(
         #     (self.state_variable_current.shape[0], self.state_variable_current.shape[0]))
