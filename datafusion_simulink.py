@@ -116,7 +116,6 @@ def GenerationData(is_start_simulation, generation_queue, app_queue, data_dict):
             control_robot_position_data)
 
 
-
 class App:
     is_init_motion_handle = 0
     frame_counter = 0
@@ -310,7 +309,7 @@ class Robot:
             sensor_data = recv_queue.get()
             if(sensor_data[0] == "imu"):
                 state_variable_predict = self.data_fusion.Predict(
-                    sensor_data[1])
+                    sensor_data[2])
             # elif(sensor_data[0] == "encoder"):
             #     state_variable = self.data_fusion.Update(
             #         sensor_data[1], "encoder")
@@ -388,7 +387,7 @@ class ImuSensor:
                 loc=self.imu_nosie["wz_n"][0], scale=self.imu_nosie["wz_n"][1], size=None)
         self.real_imu_data['t'] = self.current_raw_robot_data['t']
         self.noise_imu_data['t'] = self.current_raw_robot_data['t']
-        # print(self.real_imu_data['ax'], self.noise_imu_data["ax"])
+        # print(self.real_imu_data, self.noise_imu_data)
         ######
         self.last_raw_robot_data = copy.deepcopy(
             self.current_raw_robot_data)
@@ -530,9 +529,10 @@ class Datafusion:
         self.H_optical = np.array([[0, 0, -1, 0, 0], [0, 0, 0, 0, 1/self.l]])
         self.H_encoder_jacobian = self.H_encoder
         self.H_optical_jacobian = self.H_optical
-    def check_real_data(self,sensor_data):
-        if(sensor_data[0]=="imu"):
-            imu_data=sensor_data[1]
+
+    def check_real_data(self, sensor_data):
+        if(sensor_data[0] == "imu"):
+            imu_data = sensor_data[1]
             dt = imu_data["t"]-self.last_imu_data["t"]
             dtheta = self.last_imu_data["wz"]*dt
             theta_t = self.state_variable_last[4]+dtheta
@@ -541,20 +541,24 @@ class Datafusion:
                 np.cos(np.pi/2-theta_t)*dt+self.state_variable_last[2]
             vyt = imu_data["ax"]*np.sin(theta_t)*dt+imu_data["ay"] * \
                 np.sin(np.pi/2-theta_t)*dt+self.state_variable_last[3]
-            xt = self.state_variable_last[0]+(vxt+self.state_variable_last[2])*dt/2
-            yt = self.state_variable_last[1]+(vyt+self.state_variable_last[3])*dt/2
+            xt = self.state_variable_last[0] + \
+                (vxt+self.state_variable_last[2])*dt/2
+            yt = self.state_variable_last[1] + \
+                (vyt+self.state_variable_last[3])*dt/2
 
             print("ax:%f   ay:%f   theta:%f    vx:%f    vy:%f" %
-                (imu_data["ax"], imu_data["ay"], theta_t, vxt, vyt))
+                  (imu_data["ax"], imu_data["ay"], theta_t, vxt, vyt))
             self.last_imu_data = copy.deepcopy(imu_data)
-            self.state_variable_last = copy.deepcopy(self.state_variable_current)
+            self.state_variable_last = copy.deepcopy(
+                self.state_variable_current)
             return self.state_variable_current
-        if(sensor_data[0]=="encoder"):
-            encoder_data=sensor_data[1]
-            
-            
+        if(sensor_data[0] == "encoder"):
+            encoder_data = sensor_data[1]
 
     def Predict(self, imu_data):
+        if(self.last_imu_data["t"] == 0):
+            self.last_imu_data = copy.deepcopy(imu_data)
+            return self.state_variable_current
         dt = imu_data["t"]-self.last_imu_data["t"]
         dtheta = self.last_imu_data["wz"]*dt
         theta_t = self.state_variable_last[4]+dtheta
@@ -563,11 +567,12 @@ class Datafusion:
             np.cos(np.pi/2-theta_t)*dt+self.state_variable_last[2]
         vyt = imu_data["ax"]*np.sin(theta_t)*dt+imu_data["ay"] * \
             np.sin(np.pi/2-theta_t)*dt+self.state_variable_last[3]
+        # vt=np.sqrt(vxt*vxt+vyt*vyt)
         xt = self.state_variable_last[0]+(vxt+self.state_variable_last[2])*dt/2
         yt = self.state_variable_last[1]+(vyt+self.state_variable_last[3])*dt/2
 
-        print("ax:%f   ay:%f   theta:%f    vx:%f    vy:%f" %
-              (imu_data["ax"], imu_data["ay"], theta_t, vxt, vyt))
+        print("x:%f   y:%f   ax:%f   ay:%f   theta:%f    vx:%f    vy:%f   dt%f" %
+              (xt, yt, imu_data["ax"], imu_data["ay"], theta_t, vxt, vyt, dt))
         self.state_variable_current = np.array(
             [xt, yt, vxt, vyt, theta_t, wt], dtype=np.float32)
         # print(imu_data)
