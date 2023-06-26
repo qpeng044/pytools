@@ -25,8 +25,9 @@ robot_max_yaw_w = 0.5
 lock = threading.RLock()
 
 # robot coeffw
-distance_center_to_wheel = 0.1
-wheel_radius = 0.05
+distance_center_to_wheel = 0.244
+wheel_radius = 0.0326
+encoder_resolution = 515.458152
 
 
 is_start_simulation = Value('i', 0)
@@ -274,16 +275,16 @@ class Robot:
     robot_sensor_queue = Queue(10)
 
     def __init__(self) -> None:
-        self.imu = ImuSensor(self.robot_sensor_queue)
+        # self.imu = ImuSensor(self.robot_sensor_queue)
         self.wheel = WheelEncoder(self.robot_sensor_queue)
-        self.optical = OpticalFlow(self.robot_sensor_queue)
+        # self.optical = OpticalFlow(self.robot_sensor_queue)
         self.data_fusion = Datafusion()
         print("init robot")
 
     def StartRun(self):
         global stop_sensor_timer
         self.robot_run_start.value = 1
-        self.process = Process(target=self.RobotAlgo,
+        self.process = Process(target=self.check_sensor_data,
                                args=(self.robot_run_start, self.robot_sensor_queue, algo_res_queue,))
         self.process.start()
         sensor_timer.run()
@@ -298,6 +299,18 @@ class Robot:
         sensor_timer.cancel(optical_timer)
         self.process.join()
         self.process.close()
+
+    def check_sensor_data(self, status, recv_queue, send_queue):
+        state_variable = [0, 0, 0, 0, 0]
+        print("algo")
+        while(status.value):
+            if(recv_queue.empty()):
+                time.sleep(0.001)
+                continue
+            sensor_data = recv_queue.get()
+            state_variable_predict = self.data_fusion.check_real_data(
+                sensor_data)
+            send_queue.put(state_variable_predict)
 
     def RobotAlgo(self, status, recv_queue, send_queue):
         state_variable = [0, 0, 0, 0, 0]
@@ -399,10 +412,10 @@ class WheelEncoder:
                               "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
     last_raw_robot_data = {"px": 0, "py": 0,
                            "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
-    real_wheel_data = {"vr": 0, "vl": 0, "t": 0}
-    noise_wheel_data = {"vr": 0, "vl": 0, "t": 0}
+    real_wheel_data = {"nr": 0, "nl": 0, "t": 0}
+    noise_wheel_data = {"nr": 0, "nl": 0, "t": 0}
     distance_to_center = distance_center_to_wheel  # 10cm
-    encoder_nosie = {"vr": [0, 0.01], "vl": [0, 0.01]}  # [mean,var]
+    encoder_nosie = {"nr": [0, 0.01], "nl": [0, 0.01]}  # [mean,var]
     r = wheel_radius
 
     def __init__(self, q_msg) -> None:
@@ -427,26 +440,36 @@ class WheelEncoder:
             return
         dtheta = self.current_raw_robot_data["theta"] - \
             self.last_raw_robot_data["theta"]
-        self.real_wheel_data["vr"] = (
-            self.current_raw_robot_data["v"]+dtheta*self.distance_to_center)/self.r
-        self.real_wheel_data["vl"] = (
-            self.current_raw_robot_data["v"]-dtheta*self.distance_to_center)/self.r
-
-        self.noise_wheel_data["vr"] = self.real_wheel_data["vr"] + \
-            np.random.normal(
-                self.encoder_nosie["vr"][0], self.encoder_nosie["vr"][1])
-        self.noise_wheel_data["vl"] = self.real_wheel_data["vl"] + \
-            np.random.normal(
-                self.encoder_nosie["vl"][0], self.encoder_nosie["vl"][1])
-
+        dd = np.sqrt((self.current_raw_robot_data["px"]-self.last_raw_robot_data["px"])**2+(
+            self.current_raw_robot_data["py"]-self.last_raw_robot_data["py"])**2)
+        dr = dd+dtheta*self.distance_to_center
+        dl = dd-dtheta*self.distance_to_center
+        self.real_wheel_data["nr"] = dr*encoder_resolution/(self.r*2*np.pi)
+        self.real_wheel_data["nl"] = dl*encoder_resolution/(self.r*2*np.pi)
         self.real_wheel_data['t'] = self.current_raw_robot_data['t']
-        self.noise_wheel_data['t'] = self.current_raw_robot_data['t']
+
+        ####old method####
+        # self.real_wheel_data["nr"] = (
+        #     self.current_raw_robot_data["v"]+dtheta*self.distance_to_center)/self.r
+        # self.real_wheel_data["nl"] = (
+        #     self.current_raw_robot_data["v"]-dtheta*self.distance_to_center)/self.r
+
+        # self.noise_wheel_data["nr"] = self.real_wheel_data["nr"] + \
+        #     np.random.normal(
+        #         self.encoder_nosie["nr"][0], self.encoder_nosie["nr"][1])
+        # self.noise_wheel_data["nl"] = self.real_wheel_data["nl"] + \
+        #     np.random.normal(
+        #         self.encoder_nosie["nl"][0], self.encoder_nosie["nl"][1])
+
+        # self.real_wheel_data['t'] = self.current_raw_robot_data['t']
+        # self.noise_wheel_data['t'] = self.current_raw_robot_data['t']
+        ########################
         # print(self.real_wheel_data['vr'], self.real_wheel_data['vl'],
         #       self.noise_wheel_data['vr'], self.noise_wheel_data['vl'])
         self.last_raw_robot_data = copy.deepcopy(
             self.current_raw_robot_data)
         self.robot_queue.put(
-            ["encoder", self.real_wheel_data, self.noise_wheel_data])
+            ["encoder", self.real_wheel_data])
 
 
 class OpticalFlow:
@@ -505,13 +528,13 @@ class OpticalFlow:
 
 class Datafusion:
     state_variable_current = np.array(
-        [0, 0, 0, 0, 0]).reshape(-1, 1)  # [xt,yt,vt,thetat,wt]
+        [0, 0, 0, 0, 0])  # [xt,yt,vt,thetat,wt]
     state_variable_last = np.array(
-        [0, 0, 0, 0, 0]).reshape(-1, 1)  # [xt-1,vt,thetat-1,wt-1]
+        [0, 0, 0, 0, 0])  # [xt-1,vt,thetat-1,wt-1]
     last_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
                      "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
     last_optical_data = {"dx": 0, "dy": 0, "t": 0}
-    last_wheel_data = {"vr": 0, "vl": 0, "t": 0}
+    last_encoder_data = {"nr": 0, "nl": 0, "t": 0}
     last_Pt = np.zeros(
         (state_variable_current.shape[0], state_variable_current.shape[0]))
     Pt = np.zeros(
@@ -553,7 +576,41 @@ class Datafusion:
                 self.state_variable_current)
             return self.state_variable_current
         if(sensor_data[0] == "encoder"):
+            global encoder_resolution
             encoder_data = sensor_data[1]
+            if(self.last_encoder_data["t"] == 0):
+                self.last_encoder_data = copy.deepcopy(encoder_data)
+                return self.state_variable_current
+            dt = encoder_data["t"]-self.last_encoder_data["t"]
+            dl = np.pi*2*self.r*encoder_data["nl"]/encoder_resolution
+            dr = np.pi*2*self.r*encoder_data["nr"]/encoder_resolution
+            dd = 0.5*(dl+dr)
+            dtheta = (dr-dl)*0.5/distance_center_to_wheel
+
+            dx = dd*np.cos(self.state_variable_last[3]+0.5*dtheta)
+            dy = dd*np.sin(self.state_variable_last[3]+0.5*dtheta)
+            print(self.state_variable_last[0] +
+                  dx, self.state_variable_last[1] + dy)
+            xt = self.state_variable_last[0] + dx
+            yt = self.state_variable_last[1] + dy
+            vt = dd/dt
+            theta_t = self.state_variable_last[3]+dtheta
+            wt = dtheta/dt
+            self.state_variable_current = np.array(
+                [xt, yt, vt, theta_t, wt], dtype=np.float32)
+            self.last_encoder_data = copy.deepcopy(encoder_data)
+            self.state_variable_last = copy.deepcopy(
+                self.state_variable_current)
+            print(self.state_variable_current)
+            return self.state_variable_current
+        if sensor_data[0] == "optical":
+            global encoder_resolution
+            encoder_data = sensor_data[1]
+            if(self.last_encoder_data["t"] == 0):
+                self.last_encoder_data = copy.deepcopy(encoder_data)
+                return self.state_variable_current
+            dt = encoder_data["t"]-self.last_encoder_data["t"]
+
 
     def Predict(self, imu_data):
         if(self.last_imu_data["t"] == 0):
@@ -602,7 +659,7 @@ class Datafusion:
             measure_jacobian_matrix = H
             R = self.R_encoder
             sensor_data_array = np.array(
-                [sensor_data["vr"], sensor_data['vl']])
+                [sensor_data["nr"], sensor_data['vl']])
         elif(sensor_type == "optical"):
             H = self.H_optical
             measure_jacobian_matrix = H
@@ -617,7 +674,7 @@ class Datafusion:
         self.Pt = self.Pt-kalman_gain@H@self.Pt
         self.last_Pt = copy.deepcopy(self.Pt)
         if(sensor_type == "encoder"):
-            self.last_wheel_data = copy.deepcopy(sensor_data)
+            self.last_encoder_data = copy.deepcopy(sensor_data)
         elif(sensor_type == "optical"):
             self.last_optical_data = copy.deepcopy(sensor_data)
         return self.state_variable_current
