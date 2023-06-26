@@ -276,8 +276,8 @@ class Robot:
 
     def __init__(self) -> None:
         # self.imu = ImuSensor(self.robot_sensor_queue)
-        self.wheel = WheelEncoder(self.robot_sensor_queue)
-        # self.optical = OpticalFlow(self.robot_sensor_queue)
+        # self.wheel = WheelEncoder(self.robot_sensor_queue)
+        self.optical = OpticalFlow(self.robot_sensor_queue)
         self.data_fusion = Datafusion()
         print("init robot")
 
@@ -477,8 +477,8 @@ class OpticalFlow:
                               "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
     last_raw_robot_data = {"px": 0, "py": 0,
                            "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
-    real_optical_data = {"dx": 0, "dy": 0, "t": 0}
-    noise_optical_data = {"dx": 0, "dy": 0, "t": 0}
+    real_optical_data = {"dx": 0, "dy": 0, "theta": 0, "t": 0}
+    noise_optical_data = {"dx": 0, "dy": 0, "theta": 0, "t": 0}
     optcal_nosie = {"dx": [0, 0.001], "dy": [0, 0.001]}  # [mean,var]
 
     def __init__(self, q_msg) -> None:
@@ -508,13 +508,14 @@ class OpticalFlow:
             self.current_raw_robot_data["py"]-self.last_raw_robot_data["py"], 2))
         self.real_optical_data['dx'] = ddistance/np.cos(dtheta)
         self.real_optical_data['dy'] = np.tan(dtheta)*ddistance
-
+        self.real_optical_data["theta"] = self.current_raw_robot_data["theta"]
         self.noise_optical_data['dx'] = self.real_optical_data['dx'] + \
             np.random.normal(
                 self.optcal_nosie["dx"][0], self.optcal_nosie["dx"][1])
         self.noise_optical_data['dy'] = self.real_optical_data['dy'] + \
             np.random.normal(
                 self.optcal_nosie["dy"][0], self.optcal_nosie["dy"][1])
+        self.noise_optical_data['theta'] = self.real_optical_data["theta"]
         # print(self.real_optical_data['dx'], self.real_optical_data['dy'],
         #       self.noise_optical_data['dx'], self.noise_optical_data['dy'])
         self.real_optical_data['t'] = self.current_raw_robot_data['t']
@@ -533,8 +534,8 @@ class Datafusion:
         [0, 0, 0, 0, 0])  # [xt-1,vt,thetat-1,wt-1]
     last_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
                      "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
-    last_optical_data = {"dx": 0, "dy": 0, "t": 0}
-    last_encoder_data = {"nr": 0, "nl": 0, "t": 0}
+    last_optical_data = {"dx": 0, "dy": 0, "theta": 0, "t": 0}
+    last_encoder_data = {"nr": 0, "nl": 0, "theta": 0, "t": 0}
     last_Pt = np.zeros(
         (state_variable_current.shape[0], state_variable_current.shape[0]))
     Pt = np.zeros(
@@ -589,8 +590,8 @@ class Datafusion:
 
             dx = dd*np.cos(self.state_variable_last[3]+0.5*dtheta)
             dy = dd*np.sin(self.state_variable_last[3]+0.5*dtheta)
-            print(self.state_variable_last[0] +
-                  dx, self.state_variable_last[1] + dy)
+            # print(self.state_variable_last[0] +
+            #       dx, self.state_variable_last[1] + dy)
             xt = self.state_variable_last[0] + dx
             yt = self.state_variable_last[1] + dy
             vt = dd/dt
@@ -601,16 +602,32 @@ class Datafusion:
             self.last_encoder_data = copy.deepcopy(encoder_data)
             self.state_variable_last = copy.deepcopy(
                 self.state_variable_current)
-            print(self.state_variable_current)
+            # print(self.state_variable_current)
             return self.state_variable_current
         if sensor_data[0] == "optical":
-            global encoder_resolution
             encoder_data = sensor_data[1]
             if(self.last_encoder_data["t"] == 0):
                 self.last_encoder_data = copy.deepcopy(encoder_data)
                 return self.state_variable_current
             dt = encoder_data["t"]-self.last_encoder_data["t"]
-
+            dx_optical = encoder_data["dx"]
+            dy_optical = encoder_data["dy"]
+            theta_t = encoder_data["theta"]
+            dtheta = theta_t-self.state_variable_last[3]
+            dd = np.sqrt(dx_optical*dx_optical+dy_optical*dy_optical)
+            dx = dd*np.cos(self.state_variable_last[3]+0.5*dtheta)
+            dy = dd*np.sin(self.state_variable_last[3]+0.5*dtheta)
+            xt = self.state_variable_last[0] + dx
+            yt = self.state_variable_last[1] + dy
+            vt = dd/dt
+            wt = dtheta/dt
+            self.state_variable_current = np.array(
+                [xt, yt, vt, theta_t, wt], dtype=np.float32)
+            self.last_encoder_data = copy.deepcopy(encoder_data)
+            self.state_variable_last = copy.deepcopy(
+                self.state_variable_current)
+            # print(self.state_variable_current)
+            return self.state_variable_current
 
     def Predict(self, imu_data):
         if(self.last_imu_data["t"] == 0):
