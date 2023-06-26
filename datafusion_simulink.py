@@ -580,15 +580,18 @@ class Datafusion:
         self.state_variable_current = np.array(
             [xt, yt, vt, theta_t, wt], dtype=np.float32)
         # print(imu_data)
-        # state_jacobian_matrix = np.zeros(
-        #     (self.state_variable_current.shape[0], self.state_variable_current.shape[0]))
-        # state_jacobian_matrix[0, 3] = dt*dt * \
-        #     (-imu_data["ax"]*np.sin(theta_t)+imu_data["ay"]*np.cos(theta_t))/2
-        # state_jacobian_matrix[1, 3] = dt*dt * \
-        #     (imu_data["ax"]*np.cos(theta_t)-imu_data["ay"]*np.sin(theta_t))/2
-        # state_jacobian_matrix[3, 4] = dt
-        # state_jacobian_matrix[4, 4] = 1
-        # self.Pt = state_jacobian_matrix@self.last_Pt@state_jacobian_matrix.T+self.Q
+        state_jacobian_matrix = np.zeros(
+            (self.state_variable_current.shape[0], self.state_variable_current.shape[0]))
+        state_jacobian_matrix[0, 3] = dt * \
+            (vyt_1-vyt)/2
+        state_jacobian_matrix[1, 3] = dt * \
+            (vxt-vxt_1)/2
+        if(vt != 0):
+            state_jacobian_matrix[2, 3] = dt * \
+                ((vyt_1-vyt)*vyt+(vxt-vxt_1)*vxt)/vt
+        state_jacobian_matrix[3, 4] = dt
+        state_jacobian_matrix[4, 4] = 1
+        self.Pt = state_jacobian_matrix@self.last_Pt@state_jacobian_matrix.T+self.Q
         self.last_imu_data = copy.deepcopy(imu_data)
         self.state_variable_last = copy.deepcopy(self.state_variable_current)
         return self.state_variable_current
