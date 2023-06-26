@@ -6,12 +6,19 @@ import numpy as np
 import pandas as ps
 import threading
 import copy
-gui_label_ch = ["开始", "添加路径", "清除路径", "设置速度", "结束", "关闭多图模式", "日志"]
-gui_label_en = ["Start", "AddPath", "DeletePath",
-                "SetSpeed", "Stop", "CloseMultiPlot", "Logger"]
+gui_label_ch = ["开始", "轮子打滑", "光滑地板", "结束", "数据验证", "日志"]
+gui_label_en = ["Start", "WheelSlipp", "SmoothFloor",
+                "Stop", "DataCheck", "Logger"]
 
-gui_label_tag = ["start", "add_path", "delete_path",
-                 "set_speed", "stop", "close_multplot", "logger"]
+gui_label_tag = ["start", "wheel_slipp", "smooth_floor",
+                 "stop", "data_check", "logger"]
+
+gui_label = {}
+for index in gui_label_tag:
+    gui_label[index] = {"name": gui_label_ch[gui_label_tag.index(index)],
+                        "tag": index}
+
+# ######################
 
 
 motion_start_time = time.time()
@@ -33,6 +40,11 @@ encoder_resolution = 515.458152
 is_start_simulation = Value('i', 0)
 generation_queue = Queue(10)
 app_queue = Queue(2)
+
+
+algo_res_queue = Queue(10)
+sensor_timer = sched.scheduler(time.time, time.sleep)
+stop_sensor_timer = Value('i', 0)
 
 
 def GenerationData(is_start_simulation, generation_queue, app_queue, data_dict):
@@ -124,6 +136,8 @@ class App:
     ekf_path = {"x": [0], "y": [0], "speed": [0], "direction": [0]}
     plot_raw_robot_data = {"px": [0], "py": [0], "vr": [0],
                            "vl": [0], "v": [0], "theta": [0], "ax": [0], "ay": [0], "t": [0]}
+    wheel_slipp_flag = 0
+    smooth_slipp_flag = 0
 
     def __init__(self) -> None:
         self.robot = Robot()
@@ -140,10 +154,34 @@ class App:
         with dpg.window(tag="Primary Window", on_close=self.CloseCallback):
             global head_direction_data, head_speed_data, control_time, control_robot_position_data_key
             with dpg.group(horizontal=True):
-                dpg.add_button(label=gui_label_ch[0],
-                               tag=gui_label_tag[0], callback=self.StartSimulation)
-                dpg.add_button(label=gui_label_ch[4],
-                               tag=gui_label_tag[4], callback=self.StopSimulation)
+                dpg.add_button(label=gui_label["start"]["name"],
+                               tag=gui_label["start"]["tag"], callback=self.StartSimulation)
+                dpg.add_button(label=gui_label["stop"]["name"],
+                               tag=gui_label["stop"]["tag"], callback=self.StopSimulation)
+                dpg.add_button(label=gui_label["data_check"]["name"],
+                               tag=gui_label["data_check"]["tag"])
+                dpg.add_button(label=gui_label["wheel_slipp"]["name"],
+                               tag=gui_label["wheel_slipp"]["tag"]+"enable", show=False, callback=self.WheelSlippCallback)
+                dpg.add_button(label=gui_label["wheel_slipp"]["name"],
+                               tag=gui_label["wheel_slipp"]["tag"]+"disable", callback=self.WheelSlippCallback)
+                dpg.add_button(label=gui_label["smooth_floor"]["name"],
+                               tag=gui_label["smooth_floor"]["tag"]+"enable", show=False, callback=self.SmoothFloorCallback)
+                dpg.add_button(label=gui_label["smooth_floor"]["name"],
+                               tag=gui_label["smooth_floor"]["tag"]+"disable", callback=self.SmoothFloorCallback)
+            with dpg.theme() as self.item_theme:
+                with dpg.theme_component(dpg.mvAll):
+                    dpg.add_theme_color(
+                        dpg.mvThemeCol_Button, (0, 200, 0), category=dpg.mvThemeCat_Core)
+                    dpg.add_theme_color(
+                        dpg.mvThemeCol_ButtonHovered, (0, 200, 0), category=dpg.mvThemeCat_Core)
+                    dpg.add_theme_color(
+                        dpg.mvThemeCol_ButtonActive, (0, 200, 0), category=dpg.mvThemeCat_Core)
+                    # dpg.add_theme_style(
+                    #     dpg.mvStyleVar_FrameRounding, 0, category=dpg.mvThemeCat_Core)
+            dpg.bind_item_theme(
+                gui_label["wheel_slipp"]["tag"]+"enable", self.item_theme)
+            dpg.bind_item_theme(
+                gui_label["smooth_floor"]["tag"]+"enable", self.item_theme)
             with dpg.plot(tag="simulink_plot",
                           width=dpg.get_viewport_width()-10, height=dpg.get_viewport_height()-dpg.get_item_pos(gui_label_tag[0])[1]-50):
                 dpg.add_plot_legend()
@@ -167,6 +205,37 @@ class App:
             self.FrameCallback()
             dpg.render_dearpygui_frame()
         dpg.destroy_context()
+
+    def WheelSlippCallback(self, sender, appdata):
+        if(sender == gui_label["wheel_slipp"]["tag"]+"enable"):
+            dpg.configure_item(
+                gui_label["wheel_slipp"]["tag"]+"disable", show=True)
+            dpg.configure_item(
+                gui_label["wheel_slipp"]["tag"]+"enable", show=False)
+            self.wheel_slipp_flag = False
+        else:
+            dpg.configure_item(
+                gui_label["wheel_slipp"]["tag"]+"enable", show=True)
+            dpg.configure_item(
+                gui_label["wheel_slipp"]["tag"]+"disable", show=False)
+            self.wheel_slipp_flag = True
+
+    def DataCheckCallback(self, sender, appdata):
+        pass
+
+    def SmoothFloorCallback(self, sender, appdata):
+        if(sender == gui_label["smooth_floor"]["tag"]+"enable"):
+            dpg.configure_item(
+                gui_label["smooth_floor"]["tag"]+"disable", show=True)
+            dpg.configure_item(
+                gui_label["smooth_floor"]["tag"]+"enable", show=False)
+            self.smooth_slipp_flag = False
+        else:
+            dpg.configure_item(
+                gui_label["smooth_floor"]["tag"]+"enable", show=True)
+            dpg.configure_item(
+                gui_label["smooth_floor"]["tag"]+"disable", show=False)
+            self.smooth_slipp_flag = True
 
     def FrameCallback(self):
         global is_start_simulation, algo_res_queue, app_queue
@@ -265,18 +334,13 @@ class WorldCoordinate:
         pass
 
 
-algo_res_queue = Queue(10)
-sensor_timer = sched.scheduler(time.time, time.sleep)
-stop_sensor_timer = Value('i', 0)
-
-
 class Robot:
     robot_run_start = Value("i", 0)
     robot_sensor_queue = Queue(10)
 
     def __init__(self) -> None:
         # self.imu = ImuSensor(self.robot_sensor_queue)
-        # self.wheel = WheelEncoder(self.robot_sensor_queue)
+        self.wheel = WheelEncoder(self.robot_sensor_queue)
         self.optical = OpticalFlow(self.robot_sensor_queue)
         self.data_fusion = Datafusion()
         print("init robot")
@@ -570,8 +634,8 @@ class Datafusion:
             yt = self.state_variable_last[1] + \
                 (vyt+self.state_variable_last[3])*dt/2
 
-            print("ax:%f   ay:%f   theta:%f    vx:%f    vy:%f" %
-                  (imu_data["ax"], imu_data["ay"], theta_t, vxt, vyt))
+            # print("ax:%f   ay:%f   theta:%f    vx:%f    vy:%f" %
+            #       (imu_data["ax"], imu_data["ay"], theta_t, vxt, vyt))
             self.last_imu_data = copy.deepcopy(imu_data)
             self.state_variable_last = copy.deepcopy(
                 self.state_variable_current)
