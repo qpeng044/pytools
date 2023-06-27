@@ -138,6 +138,7 @@ class App:
                            "vl": [0], "v": [0], "theta": [0], "ax": [0], "ay": [0], "t": [0]}
     wheel_slipp_flag = 0
     smooth_slipp_flag = 0
+    res_plot_data = {}
 
     def __init__(self) -> None:
         self.robot = Robot()
@@ -268,8 +269,19 @@ class App:
         if(not algo_res_queue.empty()):
             temp_data = algo_res_queue.get()
             # print(f"get algo data{temp_data}")
-            self.ekf_path["x"].append(temp_data[0])
-            self.ekf_path["y"].append(temp_data[1])
+            if not temp_data[0] in self.res_plot_data.keys():
+                self.res_plot_data[temp_data[0]] = {"x": [], "y": []}
+                print(temp_data[0])
+                line_tag = temp_data[0]
+                dpg.add_line_series(
+                    [0], [0], tag=line_tag, parent=f"simulink_plot_y_axis")
+                dpg.set_item_label(line_tag, line_tag)
+            if(len(temp_data) == 3):
+                self.res_plot_data[temp_data[0]]["x"].append(temp_data[1])
+                self.res_plot_data[temp_data[0]]["y"].append(temp_data[2])
+            elif len(temp_data) == 2:
+                self.res_plot_data[temp_data[0]]["y"].append(temp_data[1])
+
         # print(
         #     f'a:{self.key_press_status["a"]},w:{self.key_press_status["w"]},d:{self.key_press_status["d"]},s:{self.key_press_status["s"]}')
         if(self.frame_counter % 2 == 0):
@@ -279,18 +291,23 @@ class App:
                           [self.plot_raw_robot_data["px"], self.plot_raw_robot_data["py"]])
             if(self.frame_counter % 10 == 0):
                 self.frame_counter = 0
-                min_value = min([min(
-                    self.plot_raw_robot_data["px"])-pad, min(
-                    self.plot_raw_robot_data["py"])-pad, min(self.ekf_path["x"])-pad, min(self.ekf_path["y"])-pad])
-                max_value = max([max(
-                    self.plot_raw_robot_data["px"])+pad, max(
-                    self.plot_raw_robot_data["py"])+pad, max(self.ekf_path['y'])+pad, max(self.ekf_path['x'])+pad])
-                dpg.set_axis_limits("simulink_plot_x_axis",
-                                    min_value, max_value)
-                dpg.set_axis_limits("simulink_plot_y_axis",
-                                    min_value, max_value)
-                dpg.set_value(
-                    "EKF_path", [self.ekf_path["x"], self.ekf_path["y"]])
+                # [min_x,min_y,max_x,max_y]
+
+                for key in self.res_plot_data.keys():
+                    y = self.res_plot_data[key]["y"]
+                    if(len(self.res_plot_data[key]["x"]) == 0):
+                        x = list(range(len(self.res_plot_data[key]["y"])))
+                    else:
+                        x = self.res_plot_data[key]["x"]
+                    line_tag = key
+                    dpg.set_value(line_tag, [x, y])
+                    min_max_value_list = [min(x), min(y), max(x), max(y)]
+
+                    # print(min_max_value_list)
+                    dpg.set_axis_limits("simulink_plot_x_axis",
+                                        min_max_value_list[0]-pad, min_max_value_list[2]+pad)
+                    dpg.set_axis_limits("simulink_plot_y_axis",
+                                        min_max_value_list[1]-pad, min_max_value_list[3]+pad)
 
     def StartSimulation(self, sender, appdata):
         global is_start_simulation, generation_queue, app_queue, control_robot_position_data_dict
@@ -339,16 +356,16 @@ class Robot:
     robot_sensor_queue = Queue(10)
 
     def __init__(self) -> None:
-        # self.imu = ImuSensor(self.robot_sensor_queue)
+        self.imu = ImuSensor(self.robot_sensor_queue)
         self.wheel = WheelEncoder(self.robot_sensor_queue)
-        self.optical = OpticalFlow(self.robot_sensor_queue)
+        # self.optical = OpticalFlow(self.robot_sensor_queue)
         self.data_fusion = Datafusion()
         print("init robot")
 
     def StartRun(self):
         global stop_sensor_timer
         self.robot_run_start.value = 1
-        self.process = Process(target=self.check_sensor_data,
+        self.process = Process(target=self.RobotAlgo,
                                args=(self.robot_run_start, self.robot_sensor_queue, algo_res_queue,))
         self.process.start()
         sensor_timer.run()
@@ -387,13 +404,16 @@ class Robot:
             if(sensor_data[0] == "imu"):
                 state_variable_predict = self.data_fusion.Predict(
                     sensor_data[2])
-            # elif(sensor_data[0] == "encoder"):
-            #     state_variable = self.data_fusion.Update(
-            #         sensor_data[1], "encoder")
-            # elif(sensor_data[0] == "optical"):
-            #     state_variable = self.data_fusion.Update(
-            #         sensor_data[1], "optical")
-            send_queue.put(state_variable_predict)
+            elif(sensor_data[0] == "encoder"):
+                state_variable = self.data_fusion.Update(
+                    sensor_data[1], "encoder")
+            elif(sensor_data[0] == "optical"):
+                state_variable = self.data_fusion.Update(
+                    sensor_data[1], "optical")
+            send_queue.put(
+                ['update_res', state_variable[0], state_variable[1]])
+            send_queue.put(
+                ['predict_res', state_variable_predict[0], state_variable_predict[1]])
 
 
 class ImuSensor:
@@ -742,7 +762,7 @@ class Datafusion:
             measure_jacobian_matrix = H
             R = self.R_encoder
             sensor_data_array = np.array(
-                [sensor_data["nr"], sensor_data['vl']])
+                [sensor_data["nr"]*2*np.pi/encoder_resolution, sensor_data['nl']*2*np.pi/encoder_resolution])
         elif(sensor_type == "optical"):
             H = self.H_optical
             measure_jacobian_matrix = H
