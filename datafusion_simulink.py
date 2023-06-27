@@ -670,10 +670,12 @@ class Datafusion:
             return self.state_variable_current
         if sensor_data[0] == "optical":
             encoder_data = sensor_data[1]
-            if(self.last_encoder_data["t"] == 0):
-                self.last_encoder_data = copy.deepcopy(encoder_data)
+            if(self.last_optical_data["t"] == 0):
+                self.last_optical_data = copy.deepcopy(encoder_data)
                 return self.state_variable_current
-            dt = encoder_data["t"]-self.last_encoder_data["t"]
+            dt = encoder_data["t"]-self.last_optical_data["t"]
+            if dt == 0:
+                return self.state_variable_last
             dx_optical = encoder_data["dx"]
             dy_optical = encoder_data["dy"]
             theta_t = encoder_data["theta"]
@@ -687,7 +689,7 @@ class Datafusion:
             wt = dtheta/dt
             self.state_variable_current = np.array(
                 [xt, yt, vt, theta_t, wt], dtype=np.float32)
-            self.last_encoder_data = copy.deepcopy(encoder_data)
+            self.last_optical_data = copy.deepcopy(encoder_data)
             self.state_variable_last = copy.deepcopy(
                 self.state_variable_current)
             # print(self.state_variable_current)
