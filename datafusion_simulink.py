@@ -25,10 +25,10 @@ motion_start_time = time.time()
 
 sensor_timer_event = None
 current_pose_index = 0
-robot_max_acc = 0.1
+robot_max_acc = 0.2
 robot_max_speed = 0.5
 robot_max_yaw_rate = 0.5
-robot_max_yaw_w = 0.1
+robot_max_yaw_w = 0.2
 lock = threading.RLock()
 
 # robot coeffw
@@ -45,6 +45,10 @@ app_queue = Queue(2)
 algo_res_queue = Queue(10)
 sensor_timer = sched.scheduler(time.time, time.sleep)
 stop_sensor_timer = Value('i', 0)
+
+imu_odr = 0.001  # 1ms
+wheel_odr = 0.001
+optical_odr = 0.01
 
 
 class App:
@@ -344,7 +348,7 @@ def GenerationData(is_start_simulation, generation_queue, app_queue, data_dict):
     while(is_start_simulation.value):
         if(not generation_queue.empty()):
             key_press_status = generation_queue.get()
-        time.sleep(0.001)
+        # time.sleep(0.001)
         control_robot_position_data["t"] = (time.time())
         dt = control_robot_position_data["t"] - \
             control_robot_position_data_last["t"]
@@ -438,14 +442,14 @@ class ImuSensor:
 
     def __init__(self, q_msg) -> None:
         global sensor_timer, imu_timer
-        imu_timer = sensor_timer.enter(0.010, 2, self.generate_data)
+        imu_timer = sensor_timer.enter(imu_odr, 2, self.generate_data)
         self.robot_queue = q_msg
 
     def generate_data(self):
         global control_robot_position_data_dict, stop_sensor_timer, imu_timer
         if(stop_sensor_timer.value):
             return
-        imu_timer = sensor_timer.enter(0.010, 2, self.generate_data)
+        imu_timer = sensor_timer.enter(imu_odr, 2, self.generate_data)
         lock.acquire()
         for key in control_robot_position_data_dict.keys():
             self.current_raw_robot_data[key] = control_robot_position_data_dict[key]
@@ -497,14 +501,14 @@ class WheelEncoder:
 
     def __init__(self, q_msg) -> None:
         global sensor_timer, encoder_timer
-        encoder_timer = sensor_timer.enter(0.050, 2, self.generate_data)
+        encoder_timer = sensor_timer.enter(wheel_odr, 2, self.generate_data)
         self.robot_queue = q_msg
 
     def generate_data(self):
         global control_robot_position_data_dict, stop_sensor_timer, encoder_timer
         if(stop_sensor_timer.value):
             return
-        encoder_timer = sensor_timer.enter(0.050, 2, self.generate_data)
+        encoder_timer = sensor_timer.enter(wheel_odr, 2, self.generate_data)
         lock.acquire()
         for key in control_robot_position_data_dict.keys():
             self.current_raw_robot_data[key] = control_robot_position_data_dict[key]
@@ -560,14 +564,14 @@ class OpticalFlow:
 
     def __init__(self, q_msg) -> None:
         global sensor_timer, optical_timer
-        optical_timer = sensor_timer.enter(0.050, 2, self.generate_data)
+        optical_timer = sensor_timer.enter(optical_odr, 2, self.generate_data)
         self.robot_queue = q_msg
 
     def generate_data(self):
         global control_robot_position_data_dict, stop_sensor_timer, optical_timer
         if(stop_sensor_timer.value):
             return
-        optical_timer = sensor_timer.enter(0.050, 2, self.generate_data)
+        optical_timer = sensor_timer.enter(optical_odr, 2, self.generate_data)
         lock.acquire()
         for key in control_robot_position_data_dict.keys():
             self.current_raw_robot_data[key] = control_robot_position_data_dict[key]
