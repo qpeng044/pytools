@@ -277,8 +277,8 @@ class Robot:
 
     def __init__(self) -> None:
         self.imu = ImuSensor(self.robot_sensor_queue)
-        # self.wheel = WheelEncoder(self.robot_sensor_queue)
-        # self.optical = OpticalFlow(self.robot_sensor_queue)
+        self.wheel = WheelEncoder(self.robot_sensor_queue)
+        self.optical = OpticalFlow(self.robot_sensor_queue)
         self.data_fusion = Datafusion()
         print("init robot")
 
@@ -324,10 +324,12 @@ class Robot:
             sensor_data = recv_queue.get()
             if(sensor_data[0] == "imu"):
                 state_variable_predict = self.data_fusion.Predict(
-                    sensor_data[1])
+                    sensor_data[2])
+                # print(sensor_data[1]["wz"], sensor_data[2]["wz"])
             elif(sensor_data[0] == "encoder"):
-                state_variable = self.data_fusion.Update(
-                    sensor_data[1], "encoder")
+                pass
+                # state_variable = self.data_fusion.Update(
+                #     sensor_data[1], "encoder")
             elif(sensor_data[0] == "optical"):
                 state_variable = self.data_fusion.Update(
                     sensor_data[1], "optical")
@@ -434,8 +436,8 @@ class ImuSensor:
                            "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
     real_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
                      "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
-    imu_nosie = {"ax_n": [0, 0.01], "ay_n": [0, 0.01], "az_n": [0, 0.1], "wx_n": [
-        0, 0.01], "wy_n": [0, 0.01], "wz_n": [0, 0.001]}  # [mean,var]
+    imu_nosie = {"ax_n": [0, 0.002], "ay_n": [0, 0.002], "az_n": [0, 0.0002], "wx_n": [
+        0, 0.01], "wy_n": [0, 0.01], "wz_n": [0, 0.217]}  # [mean,var]
     noise_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
                       "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
     last_imu_state = {"vxhat": 0, "vyhat": 0, "wt": 0}
@@ -587,8 +589,9 @@ class OpticalFlow:
             self.last_raw_robot_data["theta"]
         ddistance = np.sqrt(np.power(self.current_raw_robot_data["px"]-self.last_raw_robot_data["px"], 2)+np.power(
             self.current_raw_robot_data["py"]-self.last_raw_robot_data["py"], 2))
-        self.real_optical_data['dx'] = ddistance/np.cos(dtheta)
-        self.real_optical_data['dy'] = np.tan(dtheta)*ddistance
+        dt = self.current_raw_robot_data["t"]-self.last_raw_robot_data["t"]
+        self.real_optical_data['dx'] = ddistance/np.cos(dtheta)/dt
+        self.real_optical_data['dy'] = np.tan(dtheta)*ddistance/dt
         self.real_optical_data["theta"] = self.current_raw_robot_data["theta"]
         self.noise_optical_data['dx'] = self.real_optical_data['dx'] + \
             np.random.normal(
@@ -626,12 +629,12 @@ class Datafusion:
     l = 0.10
 
     def __init__(self) -> None:
-        self.Q = np.diag([0.01, 0.01, 0.01, 0.01, 0.01])
+        self.Q = np.diag([0.1, 0.1, 0.1, 0.1, 0.1])
         self.R_encoder = np.diag([0.01, 0.01])
-        self.R_optcal = np.diag([0.01, 0.01])
+        self.R_optcal = np.diag([0.0001, 0.0001])
         self.H_encoder = np.array(
             [[0, 0, 1/self.r, 0, self.b/self.r], [0, 0, 1/self.r, 0, -self.b/self.r]])
-        self.H_optical = np.array([[0, 0, -1, 0, 0], [0, 0, 0, 0, 1/self.l]])
+        self.H_optical = np.array([[0, 0, 1, 0, 0], [0, 0, 0, 0, -1/self.l]])
         self.H_encoder_jacobian = self.H_encoder
         self.H_optical_jacobian = self.H_optical
 
@@ -751,27 +754,35 @@ class Datafusion:
         self.Pt = state_jacobian_matrix@self.last_Pt@state_jacobian_matrix.T+self.Q
         self.last_imu_data = copy.deepcopy(imu_data)
         self.state_variable_last = copy.deepcopy(self.state_variable_current)
+        print(f"pt:{self.Pt}")
         return self.state_variable_current
 
     def Update(self, sensor_data, sensor_type):
+        global encoder_resolution
         if(sensor_type == "encoder"):
             H = self.H_encoder
             measure_jacobian_matrix = H
             R = self.R_encoder
             sensor_data_array = np.array(
                 [sensor_data["nr"]*2*np.pi/encoder_resolution, sensor_data['nl']*2*np.pi/encoder_resolution])
+            error = sensor_data_array-H @ self.state_variable_current
+            # print(
+            #     f'error:{error},sensor:{sensor_data_array},predict:{H @ self.state_variable_current}')
         elif(sensor_type == "optical"):
             H = self.H_optical
             measure_jacobian_matrix = H
             R = self.R_optcal
             sensor_data_array = np.array(
                 [sensor_data["dx"], sensor_data['dy']])
-
+            error = sensor_data_array-H @ self.state_variable_current
+            print(
+                f'error:{error},sensor:{sensor_data_array},predict:{H @ self.state_variable_current}')
         temp_P = H@self.Pt@H.T+R  # (2x2)
         kalman_gain = self.Pt@H.T@np.linalg.inv(temp_P)  # (5x2)
-        # print(kalman_gain)
-        self.state_variable_current = self.state_variable_current + \
-            kalman_gain@(sensor_data_array-H@self.state_variable_current)
+        correct_value = kalman_gain@(error)
+        print(f"kalman:{kalman_gain}")
+        print(f"correct:{correct_value}")
+        self.state_variable_current = self.state_variable_current + correct_value
         self.Pt = self.Pt-kalman_gain@H@self.Pt
         self.last_Pt = copy.deepcopy(self.Pt)
         if(sensor_type == "encoder"):
