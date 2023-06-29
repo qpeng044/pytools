@@ -333,6 +333,8 @@ class Robot:
             elif(sensor_data[0] == "optical"):
                 state_variable = self.data_fusion.Update(
                     sensor_data[1], "optical")
+                # state_variable = self.data_fusion.check_real_data(
+                #     ["optical", sensor_data[1]])
             send_queue.put(
                 ['update_res', state_variable[0], state_variable[1]])
             send_queue.put(
@@ -590,8 +592,8 @@ class OpticalFlow:
         ddistance = np.sqrt(np.power(self.current_raw_robot_data["px"]-self.last_raw_robot_data["px"], 2)+np.power(
             self.current_raw_robot_data["py"]-self.last_raw_robot_data["py"], 2))
         dt = self.current_raw_robot_data["t"]-self.last_raw_robot_data["t"]
-        self.real_optical_data['dx'] = ddistance/np.cos(dtheta)/dt
-        self.real_optical_data['dy'] = np.tan(dtheta)*ddistance/dt
+        self.real_optical_data['dx'] = ddistance*np.cos(dtheta/2)
+        self.real_optical_data['dy'] = np.sin(dtheta/2)*ddistance
         self.real_optical_data["theta"] = self.current_raw_robot_data["theta"]
         self.noise_optical_data['dx'] = self.real_optical_data['dx'] + \
             np.random.normal(
@@ -689,16 +691,16 @@ class Datafusion:
             # print(self.state_variable_current)
             return self.state_variable_current
         if sensor_data[0] == "optical":
-            encoder_data = sensor_data[1]
+            optical_data = sensor_data[1]
             if(self.last_optical_data["t"] == 0):
-                self.last_optical_data = copy.deepcopy(encoder_data)
+                self.last_optical_data = copy.deepcopy(optical_data)
                 return self.state_variable_current
-            dt = encoder_data["t"]-self.last_optical_data["t"]
+            dt = optical_data["t"]-self.last_optical_data["t"]
             if dt == 0:
                 return self.state_variable_last
-            dx_optical = encoder_data["dx"]
-            dy_optical = encoder_data["dy"]
-            theta_t = encoder_data["theta"]
+            dx_optical = optical_data["dx"]
+            dy_optical = optical_data["dy"]
+            theta_t = optical_data["theta"]
             dtheta = theta_t-self.state_variable_last[3]
             dd = np.sqrt(dx_optical*dx_optical+dy_optical*dy_optical)
             dx = dd*np.cos(self.state_variable_last[3]+0.5*dtheta)
@@ -709,7 +711,7 @@ class Datafusion:
             wt = dtheta/dt
             self.state_variable_current = np.array(
                 [xt, yt, vt, theta_t, wt], dtype=np.float32)
-            self.last_optical_data = copy.deepcopy(encoder_data)
+            self.last_optical_data = copy.deepcopy(optical_data)
             self.state_variable_last = copy.deepcopy(
                 self.state_variable_current)
             # print(self.state_variable_current)
@@ -753,8 +755,7 @@ class Datafusion:
         state_jacobian_matrix[4, 4] = 1
         self.Pt = state_jacobian_matrix@self.last_Pt@state_jacobian_matrix.T+self.Q
         self.last_imu_data = copy.deepcopy(imu_data)
-        self.state_variable_last = copy.deepcopy(self.state_variable_current)
-        print(f"pt:{self.Pt}")
+        # print(f"pt:{self.Pt}")
         return self.state_variable_current
 
     def Update(self, sensor_data, sensor_type):
@@ -769,14 +770,22 @@ class Datafusion:
             # print(
             #     f'error:{error},sensor:{sensor_data_array},predict:{H @ self.state_variable_current}')
         elif(sensor_type == "optical"):
-            H = self.H_optical
-            measure_jacobian_matrix = H
             R = self.R_optcal
             sensor_data_array = np.array(
                 [sensor_data["dx"], sensor_data['dy']])
-            error = sensor_data_array-H @ self.state_variable_current
-            print(
-                f'error:{error},sensor:{sensor_data_array},predict:{H @ self.state_variable_current}')
+            dx = self.state_variable_current[0]-self.state_variable_last[0]
+            dy = self.state_variable_current[1]-self.state_variable_last[1]
+            dd = np.sqrt(dx**2+dy**2)
+            dtheta = self.state_variable_current[3]-self.state_variable_last[3]
+            if(dd != 0):
+                H = np.array([[dx*np.cos(dtheta/2)/dd, dy*np.cos(dtheta/2)/dd, 0, dd*np.sin(dtheta/2), 0], [
+                             dx*np.sin(dtheta/2)/dd, dy*np.sin(dtheta/2)/dd, 0, dd*np.cos(dtheta/2), 0]])
+            else:
+                H = np.array([[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]])
+            Z = np.array([np.cos(dtheta/2)*dd, dd*np.sin(dtheta/2)])
+            error = sensor_data_array-Z
+            print(f'error:{error},sensor:{sensor_data_array},predict:{Z}')
+        self.state_variable_last = copy.deepcopy(self.state_variable_current)
         temp_P = H@self.Pt@H.T+R  # (2x2)
         kalman_gain = self.Pt@H.T@np.linalg.inv(temp_P)  # (5x2)
         correct_value = kalman_gain@(error)
