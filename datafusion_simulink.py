@@ -6,6 +6,7 @@ import numpy as np
 import pandas as ps
 import threading
 import copy
+import os
 gui_label_ch = ["开始", "轮子打滑", "光滑地板", "结束", "数据验证", "日志"]
 gui_label_en = ["Start", "WheelSlipp", "SmoothFloor",
                 "Stop", "DataCheck", "Logger"]
@@ -273,13 +274,14 @@ class WorldCoordinate:
 
 class Robot:
     robot_run_start = Value("i", 0)
-    robot_sensor_queue = Queue(1)
+    robot_sensor_queue = Queue(10)
 
     def __init__(self) -> None:
         self.imu = ImuSensor(self.robot_sensor_queue)
         self.wheel = WheelEncoder(self.robot_sensor_queue)
         self.optical = OpticalFlow(self.robot_sensor_queue)
         self.data_fusion = Datafusion()
+        self.data_fusion.SaveDataToFile()
         print("init robot")
 
     def StartRun(self):
@@ -570,8 +572,10 @@ class OpticalFlow:
         global sensor_timer, optical_timer
         optical_timer = sensor_timer.enter(optical_odr, 2, self.generate_data)
         self.robot_queue = q_msg
+        self.start_time = time.time()
 
     def generate_data(self):
+        print(f"opt cost time{time.time()-self.start_time}")
         global control_robot_position_data_dict, stop_sensor_timer, optical_timer
         if(stop_sensor_timer.value):
             return
@@ -611,6 +615,7 @@ class OpticalFlow:
             self.current_raw_robot_data)
         self.robot_queue.put(
             ["optical", self.real_optical_data, self.noise_optical_data])
+        self.start_time = time.time()
 
 
 class Datafusion:
@@ -629,6 +634,9 @@ class Datafusion:
     b = distance_center_to_wheel
     r = wheel_radius
     l = 0.10
+    save_data_to_file = 0
+    data_file_name_base = "data_fusion_sensor"
+    file_num = 0
 
     def __init__(self) -> None:
         self.Q = np.diag([0.1, 0.1, 0.1, 0.1, 0.1])
@@ -636,9 +644,18 @@ class Datafusion:
         self.R_optcal = np.diag([0.0001, 0.0001])
         self.H_encoder = np.array(
             [[0, 0, 1/self.r, 0, self.b/self.r], [0, 0, 1/self.r, 0, -self.b/self.r]])
-        self.H_optical = np.array([[0, 0, 1, 0, 0], [0, 0, 0, 0, -1/self.l]])
         self.H_encoder_jacobian = self.H_encoder
-        self.H_optical_jacobian = self.H_optical
+
+    def SaveDataToFile(self):
+        self.save_data_to_file = 1
+        while(True):
+            data_file_name = f"{self.data_file_name_base}{self.file_num}.dat"
+            if os.path.exists(data_file_name):
+                self.file_num += 1
+            else:
+                break
+
+        self.fid = open(data_file_name, 'a+')
 
     def check_real_data(self, sensor_data):
         if(sensor_data[0] == "imu"):
@@ -718,6 +735,11 @@ class Datafusion:
             return self.state_variable_current
 
     def Predict(self, imu_data):
+        start_time = time.time()
+        if(self.save_data_to_file):
+            # with open("data_fusion_sensor.dat", 'a+')as fid:
+            self.fid.write(
+                f"imu_data:{imu_data['t']} {imu_data['ax']} {imu_data['ay']} {imu_data['az']} {imu_data['wx']} {imu_data['wy']} {imu_data['wz']}\n")
         if(self.last_imu_data["t"] == 0):
             self.last_imu_data = copy.deepcopy(imu_data)
             return self.state_variable_current
@@ -756,10 +778,12 @@ class Datafusion:
         self.Pt = state_jacobian_matrix@self.last_Pt@state_jacobian_matrix.T+self.Q
         self.last_imu_data = copy.deepcopy(imu_data)
         # print(f"pt:{self.Pt}")
+        print(f"predict cost time{time.time()-start_time}")
         return self.state_variable_current
 
     def Update(self, sensor_data, sensor_type):
         global encoder_resolution
+        start_time = time.time()
         if(sensor_type == "encoder"):
             H = self.H_encoder
             measure_jacobian_matrix = H
@@ -770,6 +794,10 @@ class Datafusion:
             # print(
             #     f'error:{error},sensor:{sensor_data_array},predict:{H @ self.state_variable_current}')
         elif(sensor_type == "optical"):
+            if(self.save_data_to_file):
+                # with open("data_fusion_sensor.dat", 'a+')as fid:
+                self.fid.write(
+                    f"optical_data:{sensor_data['t']} {sensor_data['dx']} {sensor_data['dy']}\n")
             R = self.R_optcal
             sensor_data_array = np.array(
                 [sensor_data["dx"], sensor_data['dy']])
@@ -784,13 +812,13 @@ class Datafusion:
                 H = np.array([[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]])
             Z = np.array([np.cos(dtheta/2)*dd, dd*np.sin(dtheta/2)])
             error = sensor_data_array-Z
-            print(f'error:{error},sensor:{sensor_data_array},predict:{Z}')
+            # print(f'error:{error},sensor:{sensor_data_array},predict:{Z}')
         self.state_variable_last = copy.deepcopy(self.state_variable_current)
         temp_P = H@self.Pt@H.T+R  # (2x2)
         kalman_gain = self.Pt@H.T@np.linalg.inv(temp_P)  # (5x2)
         correct_value = kalman_gain@(error)
-        print(f"kalman:{kalman_gain}")
-        print(f"correct:{correct_value}")
+        # print(f"kalman:{kalman_gain}")
+        # print(f"correct:{correct_value}")
         self.state_variable_current = self.state_variable_current + correct_value
         self.Pt = self.Pt-kalman_gain@H@self.Pt
         self.last_Pt = copy.deepcopy(self.Pt)
@@ -798,6 +826,7 @@ class Datafusion:
             self.last_encoder_data = copy.deepcopy(sensor_data)
         elif(sensor_type == "optical"):
             self.last_optical_data = copy.deepcopy(sensor_data)
+        print(f"update cost time{time.time()-start_time}")
         return self.state_variable_current
 
 
