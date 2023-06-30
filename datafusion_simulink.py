@@ -332,11 +332,14 @@ class Robot:
                 pass
                 # state_variable = self.data_fusion.Update(
                 #     sensor_data[1], "encoder")
-            elif(sensor_data[0] == "optical"):
-                state_variable = self.data_fusion.Update(
-                    sensor_data[1], "optical")
+            # elif(sensor_data[0] == "optical"):
+            #     state_variable = self.data_fusion.Update(
+            #         sensor_data[1], "optical")
                 # state_variable = self.data_fusion.check_real_data(
                 #     ["optical", sensor_data[1]])
+            if(send_queue.full()):
+                send_queue.get()
+                send_queue.get()
             send_queue.put(
                 ['update_res', state_variable[0], state_variable[1]])
             send_queue.put(
@@ -572,10 +575,8 @@ class OpticalFlow:
         global sensor_timer, optical_timer
         optical_timer = sensor_timer.enter(optical_odr, 2, self.generate_data)
         self.robot_queue = q_msg
-        self.start_time = time.time()
 
     def generate_data(self):
-        print(f"opt cost time{time.time()-self.start_time}")
         global control_robot_position_data_dict, stop_sensor_timer, optical_timer
         if(stop_sensor_timer.value):
             return
@@ -615,7 +616,7 @@ class OpticalFlow:
             self.current_raw_robot_data)
         self.robot_queue.put(
             ["optical", self.real_optical_data, self.noise_optical_data])
-        self.start_time = time.time()
+
 
 
 class Datafusion:
@@ -735,7 +736,6 @@ class Datafusion:
             return self.state_variable_current
 
     def Predict(self, imu_data):
-        start_time = time.time()
         if(self.save_data_to_file):
             # with open("data_fusion_sensor.dat", 'a+')as fid:
             self.fid.write(
@@ -778,12 +778,10 @@ class Datafusion:
         self.Pt = state_jacobian_matrix@self.last_Pt@state_jacobian_matrix.T+self.Q
         self.last_imu_data = copy.deepcopy(imu_data)
         # print(f"pt:{self.Pt}")
-        print(f"predict cost time{time.time()-start_time}")
         return self.state_variable_current
 
     def Update(self, sensor_data, sensor_type):
         global encoder_resolution
-        start_time = time.time()
         if(sensor_type == "encoder"):
             H = self.H_encoder
             measure_jacobian_matrix = H
@@ -826,7 +824,6 @@ class Datafusion:
             self.last_encoder_data = copy.deepcopy(sensor_data)
         elif(sensor_type == "optical"):
             self.last_optical_data = copy.deepcopy(sensor_data)
-        print(f"update cost time{time.time()-start_time}")
         return self.state_variable_current
 
 
