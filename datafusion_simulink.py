@@ -52,6 +52,22 @@ wheel_odr = 0.001
 optical_odr = 0.01
 
 
+class Sensor:
+    start_time = time.time()
+    odr = 0.010  # 10ms
+
+    def __init__(self) -> None:
+        pass
+
+    def CheckTime(self):
+        if(time.time()-self.start_time >= self.odr):
+            self.start_time = time.time()
+            self.generate_data()
+
+    def generate_data():
+        pass
+
+
 class App:
     is_init_motion_handle = 0
     frame_counter = 0
@@ -62,10 +78,28 @@ class App:
     wheel_slipp_flag = 0
     smooth_slipp_flag = 0
     res_plot_data = {}
+    robot_cmd_qm = Queue(5)
 
     def __init__(self) -> None:
-        self.robot = Robot()
+        self.robot = Process(target=self.AddRobot, args=(self.robot_cmd_qm,))
+        self.robot.daemon
+        self.robot.start()
         self.Gui()
+
+    def AddRobot(self, cmd_qm):
+        robot = Robot()
+        while(True):
+            if(cmd_qm.empty()):
+                time.sleep(0.001)
+                if(robot.robot_run_start.value):
+                    for sensor in robot.sensor_list:
+                        sensor.CheckTime()
+                continue
+            cmd = cmd_qm.get()
+            if(cmd == "startrun"):
+                robot.StartRun()
+            elif(cmd == "stoprun"):
+                robot.StopRun()
 
     def Gui(self):
         dpg.create_context()
@@ -238,8 +272,9 @@ class App:
         is_start_simulation.value = 1
         self.process = Process(target=GenerationData,
                                args=(is_start_simulation, generation_queue, app_queue, control_robot_position_data_dict,))
+        self.process.daemon
         self.process.start()
-        self.robot.StartRun()
+        self.robot_cmd_qm.put("startrun")
 
     def StopSimulation(self, sender, appdata):
         global is_start_simulation
@@ -247,7 +282,8 @@ class App:
         is_start_simulation.value = 0
         self.process.join()
         self.process.close()
-        self.robot.StopRun()
+        self.robot_cmd_qm.put("stoprun")
+        self.robot.close()
 
     def viewport_resize_callback(self, sender, appdata):
         dpg.set_item_width("simulink_plot", dpg.get_viewport_width()-10)
@@ -275,11 +311,15 @@ class WorldCoordinate:
 class Robot:
     robot_run_start = Value("i", 0)
     robot_sensor_queue = Queue(10)
+    sensor_list = []
 
     def __init__(self) -> None:
         self.imu = ImuSensor(self.robot_sensor_queue)
+        self.sensor_list.append(self.imu)
         self.wheel = WheelEncoder(self.robot_sensor_queue)
+        self.sensor_list.append(self.wheel)
         self.optical = OpticalFlow(self.robot_sensor_queue)
+        self.sensor_list.append(self.optical)
         self.data_fusion = Datafusion()
         self.data_fusion.SaveDataToFile()
         print("init robot")
@@ -294,12 +334,12 @@ class Robot:
 
     def StopRun(self):
         print("stop robot")
-        global stop_sensor_timer
+        # global stop_sensor_timer
         self.robot_run_start.value = 0
-        stop_sensor_timer.value = 1
-        sensor_timer.cancel(imu_timer)
-        sensor_timer.cancel(encoder_timer)
-        sensor_timer.cancel(optical_timer)
+        # stop_sensor_timer.value = 1
+        # sensor_timer.cancel(imu_timer)
+        # sensor_timer.cancel(encoder_timer)
+        # sensor_timer.cancel(optical_timer)
         self.process.join()
         self.process.close()
 
@@ -321,7 +361,7 @@ class Robot:
         print("algo")
         while(status.value):
             if(recv_queue.empty()):
-                time.sleep(0.001)
+                # time.sleep(0.001)
                 continue
             sensor_data = recv_queue.get()
             if(sensor_data[0] == "imu"):
@@ -337,8 +377,13 @@ class Robot:
                     sensor_data[1], "optical")
                 # state_variable = self.data_fusion.check_real_data(
                 #     ["optical", sensor_data[1]])
+            if(send_queue.full()):
+                send_queue.get()
+                send_queue.get()
             send_queue.put(
                 ['update_res', state_variable[0], state_variable[1]])
+            if(send_queue.full()):
+                send_queue.get()
             send_queue.put(
                 ['predict_res', state_variable_predict[0], state_variable_predict[1]])
 
@@ -433,7 +478,7 @@ def GenerationData(is_start_simulation, generation_queue, app_queue, data_dict):
             control_robot_position_data)
 
 
-class ImuSensor:
+class ImuSensor(Sensor):
     current_raw_robot_data = {"px": 0, "py": 0,
                               "vr": 0, "vl": 0, "v": 0, "theta": 0, "ax": 0, "ay": 0, "t": 0}
     last_raw_robot_data = {"px": 0, "py": 0,
@@ -447,19 +492,22 @@ class ImuSensor:
     last_imu_state = {"vxhat": 0, "vyhat": 0, "wt": 0}
 
     def __init__(self, q_msg) -> None:
-        global sensor_timer, imu_timer
-        imu_timer = sensor_timer.enter(imu_odr, 2, self.generate_data)
+        # global sensor_timer, imu_timer
+        # imu_timer = sensor_timer.enter(imu_odr, 2, self.generate_data)
         self.robot_queue = q_msg
+        self.odr = imu_odr
 
     def generate_data(self):
-        global control_robot_position_data_dict, stop_sensor_timer, imu_timer
+        global control_robot_position_data_dict, stop_sensor_timer
         if(stop_sensor_timer.value):
             return
-        imu_timer = sensor_timer.enter(imu_odr, 2, self.generate_data)
-        lock.acquire()
-        for key in control_robot_position_data_dict.keys():
-            self.current_raw_robot_data[key] = control_robot_position_data_dict[key]
-        lock.release()
+        # imu_timer = sensor_timer.enter(imu_odr, 2, self.generate_data)
+        # lock.acquire()
+        # for key in control_robot_position_data_dict.keys():
+        #     self.current_raw_robot_data[key] = control_robot_position_data_dict[key]
+        # lock.release()
+        self.current_raw_robot_data = copy.deepcopy(
+            control_robot_position_data_dict)
         if(self.last_raw_robot_data["t"] == 0):
             self.last_raw_robot_data = copy.deepcopy(
                 self.current_raw_robot_data)
@@ -494,7 +542,7 @@ class ImuSensor:
         self.robot_queue.put(["imu", self.real_imu_data, self.noise_imu_data])
 
 
-class WheelEncoder:
+class WheelEncoder(Sensor):
     current_raw_robot_data = {"px": 0, "py": 0,
                               "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
     last_raw_robot_data = {"px": 0, "py": 0,
@@ -506,15 +554,16 @@ class WheelEncoder:
     r = wheel_radius
 
     def __init__(self, q_msg) -> None:
-        global sensor_timer, encoder_timer
-        encoder_timer = sensor_timer.enter(wheel_odr, 2, self.generate_data)
+        # global sensor_timer, encoder_timer
+        # encoder_timer = sensor_timer.enter(wheel_odr, 2, self.generate_data)
         self.robot_queue = q_msg
+        self.odr = wheel_odr
 
     def generate_data(self):
         global control_robot_position_data_dict, stop_sensor_timer, encoder_timer
         if(stop_sensor_timer.value):
             return
-        encoder_timer = sensor_timer.enter(wheel_odr, 2, self.generate_data)
+        # encoder_timer = sensor_timer.enter(wheel_odr, 2, self.generate_data)
         lock.acquire()
         for key in control_robot_position_data_dict.keys():
             self.current_raw_robot_data[key] = control_robot_position_data_dict[key]
@@ -559,7 +608,7 @@ class WheelEncoder:
             ["encoder", self.real_wheel_data])
 
 
-class OpticalFlow:
+class OpticalFlow(Sensor):
     current_raw_robot_data = {"px": 0, "py": 0,
                               "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
     last_raw_robot_data = {"px": 0, "py": 0,
@@ -567,23 +616,27 @@ class OpticalFlow:
     real_optical_data = {"dx": 0, "dy": 0, "theta": 0, "t": 0}
     noise_optical_data = {"dx": 0, "dy": 0, "theta": 0, "t": 0}
     optcal_nosie = {"dx": [0, 0.001], "dy": [0, 0.001]}  # [mean,var]
+    odr_start_time = time.time()
 
     def __init__(self, q_msg) -> None:
-        global sensor_timer, optical_timer
-        optical_timer = sensor_timer.enter(optical_odr, 2, self.generate_data)
+        # global sensor_timer, optical_timer
+        # optical_timer = sensor_timer.enter(optical_odr, 2, self.generate_data)
         self.robot_queue = q_msg
-        self.start_time = time.time()
+        self.odr = optical_odr
 
     def generate_data(self):
-        print(f"opt cost time{time.time()-self.start_time}")
-        global control_robot_position_data_dict, stop_sensor_timer, optical_timer
-        if(stop_sensor_timer.value):
-            return
-        optical_timer = sensor_timer.enter(optical_odr, 2, self.generate_data)
-        lock.acquire()
-        for key in control_robot_position_data_dict.keys():
-            self.current_raw_robot_data[key] = control_robot_position_data_dict[key]
-        lock.release()
+        print(f"optical odr:{time.time()-self.odr_start_time}")
+        self.odr_start_time = time.time()
+        global control_robot_position_data_dict, stop_sensor_timer
+        # if(stop_sensor_timer.value):
+        #     return
+        # optical_timer = sensor_timer.enter(optical_odr, 2, self.generate_data)
+        # lock.acquire()
+        # for key in control_robot_position_data_dict.keys():
+        #     self.current_raw_robot_data[key] = control_robot_position_data_dict[key]
+        # lock.release()
+        self.current_raw_robot_data = copy.deepcopy(
+            control_robot_position_data_dict)
         if(self.last_raw_robot_data["t"] == 0):
             self.last_raw_robot_data = copy.deepcopy(
                 self.current_raw_robot_data)
@@ -596,8 +649,8 @@ class OpticalFlow:
         ddistance = np.sqrt(np.power(self.current_raw_robot_data["px"]-self.last_raw_robot_data["px"], 2)+np.power(
             self.current_raw_robot_data["py"]-self.last_raw_robot_data["py"], 2))
         dt = self.current_raw_robot_data["t"]-self.last_raw_robot_data["t"]
-        self.real_optical_data['dx'] = ddistance*np.cos(dtheta/2)
-        self.real_optical_data['dy'] = np.sin(dtheta/2)*ddistance
+        self.real_optical_data['dx'] = ddistance*np.cos(dtheta*0.5)
+        self.real_optical_data['dy'] = np.sin(dtheta*0.5)*ddistance
         self.real_optical_data["theta"] = self.current_raw_robot_data["theta"]
         self.noise_optical_data['dx'] = self.real_optical_data['dx'] + \
             np.random.normal(
@@ -611,11 +664,14 @@ class OpticalFlow:
         self.real_optical_data['t'] = self.current_raw_robot_data['t']
         self.noise_optical_data['t'] = self.current_raw_robot_data['t']
         ####
+
         self.last_raw_robot_data = copy.deepcopy(
             self.current_raw_robot_data)
+
         self.robot_queue.put(
             ["optical", self.real_optical_data, self.noise_optical_data])
-        self.start_time = time.time()
+        print(f"optical generate data:{time.time()-self.odr_start_time}")
+        self.odr_start_time = time.time()
 
 
 class Datafusion:
