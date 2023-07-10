@@ -492,6 +492,7 @@ class ImuSensor(Sensor):
     last_imu_state = {"vxhat": 0, "vyhat": 0, "wt": 0}
 
     def __init__(self, q_msg) -> None:
+        super(ImuSensor,self).__init__()
         # global sensor_timer, imu_timer
         # imu_timer = sensor_timer.enter(imu_odr, 2, self.generate_data)
         self.robot_queue = q_msg
@@ -554,6 +555,7 @@ class WheelEncoder(Sensor):
     r = wheel_radius
 
     def __init__(self, q_msg) -> None:
+        super(WheelEncoder,self).__init__()
         # global sensor_timer, encoder_timer
         # encoder_timer = sensor_timer.enter(wheel_odr, 2, self.generate_data)
         self.robot_queue = q_msg
@@ -619,6 +621,7 @@ class OpticalFlow(Sensor):
     odr_start_time = time.time()
 
     def __init__(self, q_msg) -> None:
+        super(OpticalFlow,self).__init__()
         # global sensor_timer, optical_timer
         # optical_timer = sensor_timer.enter(optical_odr, 2, self.generate_data)
         self.robot_queue = q_msg
