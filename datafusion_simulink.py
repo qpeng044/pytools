@@ -44,7 +44,7 @@ app_queue = Queue(2)
 
 
 algo_res_queue = Queue(10)
-sensor_timer = sched.scheduler(time.time, time.sleep)
+# sensor_timer = sched.scheduler(time.time, time.sleep)
 stop_sensor_timer = Value('i', 0)
 
 imu_odr = 0.001  # 1ms
@@ -81,13 +81,11 @@ class App:
     robot_cmd_qm = Queue(5)
 
     def __init__(self) -> None:
-        self.robot = Process(target=self.AddRobot, args=(self.robot_cmd_qm,))
-        self.robot.daemon
-        self.robot.start()
         self.Gui()
 
     def AddRobot(self, cmd_qm):
         robot = Robot()
+        is_robot_runing = 0
         while(True):
             if(cmd_qm.empty()):
                 time.sleep(0.001)
@@ -98,8 +96,13 @@ class App:
             cmd = cmd_qm.get()
             if(cmd == "startrun"):
                 robot.StartRun()
+                is_robot_runing = 1
             elif(cmd == "stoprun"):
-                robot.StopRun()
+                if(is_robot_runing):
+                    robot.StopRun()
+                    is_robot_runing = 0
+                break
+        print("stop add robot")
 
     def Gui(self):
         dpg.create_context()
@@ -268,11 +271,16 @@ class App:
 
     def StartSimulation(self, sender, appdata):
         global is_start_simulation, generation_queue, app_queue, control_robot_position_data_dict
-        print("start sched")
+        print("start")
+        self.robot = Process(target=self.AddRobot, args=(self.robot_cmd_qm,))
+        self.robot.daemon
+
         is_start_simulation.value = 1
         self.process = Process(target=GenerationData,
                                args=(is_start_simulation, generation_queue, app_queue, control_robot_position_data_dict,))
         self.process.daemon
+
+        self.robot.start()
         self.process.start()
         self.robot_cmd_qm.put("startrun")
 
@@ -283,7 +291,10 @@ class App:
         self.process.join()
         self.process.close()
         self.robot_cmd_qm.put("stoprun")
+        self.robot.join()
         self.robot.close()
+        dpg.set_axis_limits_auto("simulink_plot_x_axis")
+        dpg.set_axis_limits_auto("simulink_plot_y_axis")
 
     def viewport_resize_callback(self, sender, appdata):
         dpg.set_item_width("simulink_plot", dpg.get_viewport_width()-10)
@@ -291,7 +302,10 @@ class App:
         )-dpg.get_item_pos(gui_label_tag[0])[1]-50)
 
     def CloseCallback(self, sender, appdata):
-        pass
+        print("close window")
+        self.robot_cmd_qm.put("stoprun")
+        self.robot.join()
+        self.robot.close()
 
     def RobotMotionResizeCallback(self, send, appdata):
         dpg.set_item_width("motion_map", dpg.get_item_width("robot_motion")-10)
@@ -329,8 +343,9 @@ class Robot:
         self.robot_run_start.value = 1
         self.process = Process(target=self.RobotAlgo,
                                args=(self.robot_run_start, self.robot_sensor_queue, algo_res_queue,))
+        self.process.daemon
         self.process.start()
-        sensor_timer.run()
+        # sensor_timer.run()
 
     def StopRun(self):
         print("stop robot")
@@ -492,7 +507,7 @@ class ImuSensor(Sensor):
     last_imu_state = {"vxhat": 0, "vyhat": 0, "wt": 0}
 
     def __init__(self, q_msg) -> None:
-        super(ImuSensor,self).__init__()
+        super(ImuSensor, self).__init__()
         # global sensor_timer, imu_timer
         # imu_timer = sensor_timer.enter(imu_odr, 2, self.generate_data)
         self.robot_queue = q_msg
@@ -555,7 +570,7 @@ class WheelEncoder(Sensor):
     r = wheel_radius
 
     def __init__(self, q_msg) -> None:
-        super(WheelEncoder,self).__init__()
+        super(WheelEncoder, self).__init__()
         # global sensor_timer, encoder_timer
         # encoder_timer = sensor_timer.enter(wheel_odr, 2, self.generate_data)
         self.robot_queue = q_msg
@@ -621,7 +636,7 @@ class OpticalFlow(Sensor):
     odr_start_time = time.time()
 
     def __init__(self, q_msg) -> None:
-        super(OpticalFlow,self).__init__()
+        super(OpticalFlow, self).__init__()
         # global sensor_timer, optical_timer
         # optical_timer = sensor_timer.enter(optical_odr, 2, self.generate_data)
         self.robot_queue = q_msg
