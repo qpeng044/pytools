@@ -43,7 +43,7 @@ generation_queue = Queue(10)
 app_queue = Queue(2)
 
 
-algo_res_queue = Queue(10)
+algo_res_queue = Queue(2)
 # sensor_timer = sched.scheduler(time.time, time.sleep)
 stop_sensor_timer = Value('i', 0)
 
@@ -345,16 +345,10 @@ class Robot:
                                args=(self.robot_run_start, self.robot_sensor_queue, algo_res_queue,))
         self.process.daemon
         self.process.start()
-        # sensor_timer.run()
 
     def StopRun(self):
         print("stop robot")
-        # global stop_sensor_timer
         self.robot_run_start.value = 0
-        # stop_sensor_timer.value = 1
-        # sensor_timer.cancel(imu_timer)
-        # sensor_timer.cancel(encoder_timer)
-        # sensor_timer.cancel(optical_timer)
         self.process.join()
         self.process.close()
 
@@ -383,6 +377,10 @@ class Robot:
                 state_variable_predict = self.data_fusion.Predict(
                     sensor_data[2])
                 # print(sensor_data[1]["wz"], sensor_data[2]["wz"])
+                if(not send_queue.full()):
+                    send_queue.put(
+                        ['predict_res', state_variable_predict[0], state_variable_predict[1]], block=False)
+
             elif(sensor_data[0] == "encoder"):
                 pass
                 # state_variable = self.data_fusion.Update(
@@ -390,17 +388,19 @@ class Robot:
             elif(sensor_data[0] == "optical"):
                 state_variable = self.data_fusion.Update(
                     sensor_data[1], "optical")
+                if(send_queue.full()):
+                    send_queue.get()
+                send_queue.put(
+                    ['update_res', state_variable[0], state_variable[1]], block=False)
                 # state_variable = self.data_fusion.check_real_data(
                 #     ["optical", sensor_data[1]])
-            if(send_queue.full()):
-                send_queue.get()
-                send_queue.get()
-            send_queue.put(
-                ['update_res', state_variable[0], state_variable[1]])
-            if(send_queue.full()):
-                send_queue.get()
-            send_queue.put(
-                ['predict_res', state_variable_predict[0], state_variable_predict[1]])
+
+            # if(send_queue.full()):
+            #     send_queue.get()
+            #     send_queue.get()
+
+            # if(send_queue.full()):
+            #     send_queue.get()
 
 
 def GenerationData(is_start_simulation, generation_queue, app_queue, data_dict):
@@ -907,10 +907,4 @@ class Datafusion:
 if __name__ == "__main__":
     control_robot_position_data_dict = Manager().dict({"px": 0, "py": 0, "vr":
                                                        0, "vl": 0, "v": 0, "theta": 0, "ax": 0, "ay": 0, "t": 0})
-    # is_start_simulation.value = 1
-    # process = Process(target=GenerationData,
-    #                   args=(is_start_simulation, generation_queue, app_queue,))
-    # process.start()
     app = App()
-    # gui = Process(target=app.Gui)
-    # gui.start()
