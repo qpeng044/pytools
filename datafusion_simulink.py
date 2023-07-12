@@ -833,8 +833,8 @@ class Datafusion:
         xt = self.state_variable_last[0]+(vxt+vxt_1)*dt/2
         yt = self.state_variable_last[1]+(vyt+vyt_1)*dt/2
         # print(f'**imu vxt:{vxt},vyt:{vyt}')
-        # print("x:%f   y:%f   ax:%f   ay:%f   theta:%f    vx:%f    vy:%f   dt%f" %
-        #       (xt, yt, imu_data["ax"], imu_data["ay"], theta_t, vxt, vyt, dt))
+        print("x:%f   y:%f   ax:%f   ay:%f   theta:%f    vx:%f    vy:%f   dt%f" %
+              (xt, yt, imu_data["ax"], imu_data["ay"], theta_t, vxt, vyt, dt))
         self.state_variable_current = np.array(
             [xt, yt, vt, theta_t, wt], dtype=np.float32)
         # print(imu_data)
@@ -852,7 +852,7 @@ class Datafusion:
         self.Pt = state_jacobian_matrix@self.last_Pt@state_jacobian_matrix.T+self.Q
         self.last_imu_data = copy.deepcopy(imu_data)
         # print(f"pt:{self.Pt}")
-        print(f"predict cost time{time.time()-start_time}")
+        # print(f"predict cost time{time.time()-start_time}")
         return self.state_variable_current
 
     def Update(self, sensor_data, sensor_type):
@@ -900,7 +900,7 @@ class Datafusion:
             self.last_encoder_data = copy.deepcopy(sensor_data)
         elif(sensor_type == "optical"):
             self.last_optical_data = copy.deepcopy(sensor_data)
-        print(f"update cost time{time.time()-start_time}")
+        # print(f"update cost time{time.time()-start_time}")
         return self.state_variable_current
 
 
