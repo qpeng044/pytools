@@ -376,7 +376,9 @@ class Robot:
             if(sensor_data[0] == "imu"):
                 state_variable_predict = self.data_fusion.Predict(
                     sensor_data[2])
-                # print(sensor_data[1]["wz"], sensor_data[2]["wz"])
+
+                # state_variable_predict = self.data_fusion.check_real_data(
+                #     ["imu", sensor_data[1]])
                 if(not send_queue.full()):
                     send_queue.put(
                         ['predict_res', state_variable_predict[0], state_variable_predict[1]], block=False)
@@ -388,12 +390,12 @@ class Robot:
             elif(sensor_data[0] == "optical"):
                 state_variable = self.data_fusion.Update(
                     sensor_data[1], "optical")
+                # state_variable = self.data_fusion.check_real_data(
+                #     ["optical", sensor_data[1]])
                 if(send_queue.full()):
                     send_queue.get()
                 send_queue.put(
                     ['update_res', state_variable[0], state_variable[1]], block=False)
-                # state_variable = self.data_fusion.check_real_data(
-                #     ["optical", sensor_data[1]])
 
             # if(send_queue.full()):
             #     send_queue.get()
@@ -500,8 +502,8 @@ class ImuSensor(Sensor):
                            "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
     real_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
                      "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
-    imu_nosie = {"ax_n": [0, 0.002], "ay_n": [0, 0.002], "az_n": [0, 0.0002], "wx_n": [
-        0, 0.01], "wy_n": [0, 0.01], "wz_n": [0, 0.217]}  # [mean,var]
+    imu_nosie = {"ax_n": [0, 0.004], "ay_n": [0, 0.004], "az_n": [0, 0.004], "wx_n": [
+        0, 0.005], "wy_n": [0, 0.005], "wz_n": [0, 0.005]}  # [mean,var]
     noise_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
                       "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
     last_imu_state = {"vxhat": 0, "vyhat": 0, "wt": 0}
@@ -632,7 +634,7 @@ class OpticalFlow(Sensor):
                            "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
     real_optical_data = {"dx": 0, "dy": 0, "theta": 0, "t": 0}
     noise_optical_data = {"dx": 0, "dy": 0, "theta": 0, "t": 0}
-    optcal_nosie = {"dx": [0, 0.001], "dy": [0, 0.001]}  # [mean,var]
+    optcal_nosie = {"dx": [0, 0.0001], "dy": [0, 0.0001]}  # [mean,var]
     odr_start_time = time.time()
 
     def __init__(self, q_msg) -> None:
@@ -643,7 +645,6 @@ class OpticalFlow(Sensor):
         self.odr = optical_odr
 
     def generate_data(self):
-        print(f"optical odr:{time.time()-self.odr_start_time}")
         self.odr_start_time = time.time()
         global control_robot_position_data_dict, stop_sensor_timer
         # if(stop_sensor_timer.value):
@@ -688,14 +689,52 @@ class OpticalFlow(Sensor):
 
         self.robot_queue.put(
             ["optical", self.real_optical_data, self.noise_optical_data])
-        print(f"optical generate data:{time.time()-self.odr_start_time}")
-        self.odr_start_time = time.time()
+
+
+class Datafusion2:
+    state_variable_current = np.array(
+        [0, 0, 0, 0, 0, 0])  # [xt,yt,vxt,vyt,theta_t,wt]
+    state_variable_last = np.array(
+        [0, 0, 0, 0, 0, 0])  # [xt,yt,vt,theta_t,wt]
+    state_variable_last_t = time.time()
+    state_variable_predic = np.array(
+        [0, 0, 0, 0, 0, 0])  # [xt,yt,vt,theta_t,wt]
+    P = np.eye(5)
+    last_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
+                     "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
+
+    def Predict(self):
+        current_time = time.time()
+        dt = current_time-self.state_variable_last_t
+        theta_t = self.state_variable_current[2]
+        A = np.array([[1, 0, dt, 0, 0, 0],
+                      [0, 1, 0, dt, 0, 0],
+                      [0, 0, 1, 0, 0, 0],
+                      [0, 0, 0, 1, 0, 0],
+                      [0, 0, 0, 0, 1, dt],
+                      [0, 0, 0, 0, 0, 1]])
+        self.state_variable_predic = A@self.state_variable_current
+        Q = np.diag([dt, dt, dt, dt, dt])
+        self.P = A @ self.P @ A.T + Q
+        self.state_variable_last_t = current_time
+        return self.state_variable_predic
+
+    def Update(self, sensor_data, sensor_type):
+        if(sensor_type == "imu"):
+            imu_data = sensor_data
+            dt = imu_data["t"]-self.last_imu_data["t"]
 
 
 class Datafusion:
     state_variable_current = np.array(
         [0, 0, 0, 0, 0])  # [xt,yt,vt,thetat,wt]
     state_variable_last = np.array(
+        [0, 0, 0, 0, 0])  # [xt-1,vt,thetat-1,wt-1]
+    imu_state_variable_last = np.array(
+        [0, 0, 0, 0, 0])  # [xt-1,vt,thetat-1,wt-1]
+    ofs_state_variable_last = np.array(
+        [0, 0, 0, 0, 0])  # [xt-1,vt,thetat-1,wt-1]
+    encoder_state_variable_last = np.array(
         [0, 0, 0, 0, 0])  # [xt-1,vt,thetat-1,wt-1]
     last_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
                      "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
@@ -713,9 +752,9 @@ class Datafusion:
     file_num = 0
 
     def __init__(self) -> None:
-        self.Q = np.diag([0.1, 0.1, 0.1, 0.1, 0.1])
+        self.Q = np.diag([0.001, 0.001, 0.001, 0.001, 0.001])
         self.R_encoder = np.diag([0.01, 0.01])
-        self.R_optcal = np.diag([0.0001, 0.0001])
+        self.R_optcal = np.diag([0.1, 0.1])
         self.H_encoder = np.array(
             [[0, 0, 1/self.r, 0, self.b/self.r], [0, 0, 1/self.r, 0, -self.b/self.r]])
         self.H_encoder_jacobian = self.H_encoder
@@ -746,9 +785,12 @@ class Datafusion:
                 (vxt+self.state_variable_last[2])*dt/2
             yt = self.state_variable_last[1] + \
                 (vyt+self.state_variable_last[3])*dt/2
-
-            # print("ax:%f   ay:%f   theta:%f    vx:%f    vy:%f" %
-            #       (imu_data["ax"], imu_data["ay"], theta_t, vxt, vyt))
+            vt = np.sqrt(vxt*vxt+vyt*vyt)
+            self.state_variable_current = np.array(
+                [xt, yt, vt, theta_t, wt], dtype=np.float32)
+            print(self.state_variable_last)
+            # print("xt:%f  yt:%f   ax:%f   ay:%f   theta:%f    vx:%f    vy:%f" %
+            #       (xt, yt, imu_data["ax"], imu_data["ay"], theta_t, vxt, vyt))
             self.last_imu_data = copy.deepcopy(imu_data)
             self.state_variable_last = copy.deepcopy(
                 self.state_variable_current)
@@ -819,22 +861,23 @@ class Datafusion:
             return self.state_variable_current
         dt = imu_data["t"]-self.last_imu_data["t"]
         dtheta = self.last_imu_data["wz"]*dt
-        theta_t = self.state_variable_last[3]+dtheta
+        theta_t = self.imu_state_variable_last[3]+dtheta
         wt = imu_data["wz"]
-        vxt_1 = self.state_variable_last[2] * \
-            np.cos(self.state_variable_last[3])
-        vyt_1 = self.state_variable_last[2] * \
-            np.sin(self.state_variable_last[3])
+        vxt_1 = self.imu_state_variable_last[2] * \
+            np.cos(self.imu_state_variable_last[3])
+        vyt_1 = self.imu_state_variable_last[2] * \
+            np.sin(self.imu_state_variable_last[3])
         vxt = imu_data["ax"]*np.cos(theta_t)*dt-imu_data["ay"] * \
             np.cos(np.pi/2-theta_t)*dt+vxt_1
         vyt = imu_data["ax"]*np.sin(theta_t)*dt+imu_data["ay"] * \
             np.sin(np.pi/2-theta_t)*dt+vyt_1
         vt = np.sqrt(vxt*vxt+vyt*vyt)
-        xt = self.state_variable_last[0]+(vxt+vxt_1)*dt/2
-        yt = self.state_variable_last[1]+(vyt+vyt_1)*dt/2
+        xt = self.imu_state_variable_last[0]+(vxt+vxt_1)*dt/2
+        yt = self.imu_state_variable_last[1]+(vyt+vyt_1)*dt/2
+        # print(self.imu_state_variable_last)
         # print(f'**imu vxt:{vxt},vyt:{vyt}')
-        print("x:%f   y:%f   ax:%f   ay:%f   theta:%f    vx:%f    vy:%f   dt%f" %
-              (xt, yt, imu_data["ax"], imu_data["ay"], theta_t, vxt, vyt, dt))
+        # print("x:%f   y:%f   ax:%f   ay:%f   theta:%f    vx:%f    vy:%f   dt%f" %
+        #       (xt, yt, imu_data["ax"], imu_data["ay"], theta_t, vxt, vyt, dt))
         self.state_variable_current = np.array(
             [xt, yt, vt, theta_t, wt], dtype=np.float32)
         # print(imu_data)
@@ -853,6 +896,8 @@ class Datafusion:
         self.last_imu_data = copy.deepcopy(imu_data)
         # print(f"pt:{self.Pt}")
         # print(f"predict cost time{time.time()-start_time}")
+        self.imu_state_variable_last = copy.deepcopy(
+            self.state_variable_current)
         return self.state_variable_current
 
     def Update(self, sensor_data, sensor_type):
@@ -875,10 +920,11 @@ class Datafusion:
             R = self.R_optcal
             sensor_data_array = np.array(
                 [sensor_data["dx"], sensor_data['dy']])
-            dx = self.state_variable_current[0]-self.state_variable_last[0]
-            dy = self.state_variable_current[1]-self.state_variable_last[1]
+            dx = self.state_variable_current[0]-self.ofs_state_variable_last[0]
+            dy = self.state_variable_current[1]-self.ofs_state_variable_last[1]
             dd = np.sqrt(dx**2+dy**2)
-            dtheta = self.state_variable_current[3]-self.state_variable_last[3]
+            dtheta = self.state_variable_current[3] - \
+                self.ofs_state_variable_last[3]
             if(dd != 0):
                 H = np.array([[dx*np.cos(dtheta/2)/dd, dy*np.cos(dtheta/2)/dd, 0, dd*np.sin(dtheta/2), 0], [
                              dx*np.sin(dtheta/2)/dd, dy*np.sin(dtheta/2)/dd, 0, dd*np.cos(dtheta/2), 0]])
@@ -887,7 +933,7 @@ class Datafusion:
             Z = np.array([np.cos(dtheta/2)*dd, dd*np.sin(dtheta/2)])
             error = sensor_data_array-Z
             # print(f'error:{error},sensor:{sensor_data_array},predict:{Z}')
-        self.state_variable_last = copy.deepcopy(self.state_variable_current)
+        # self.state_variable_last = copy.deepcopy(self.state_variable_current)
         temp_P = H@self.Pt@H.T+R  # (2x2)
         kalman_gain = self.Pt@H.T@np.linalg.inv(temp_P)  # (5x2)
         correct_value = kalman_gain@(error)
@@ -896,10 +942,17 @@ class Datafusion:
         self.state_variable_current = self.state_variable_current + correct_value
         self.Pt = self.Pt-kalman_gain@H@self.Pt
         self.last_Pt = copy.deepcopy(self.Pt)
+
         if(sensor_type == "encoder"):
             self.last_encoder_data = copy.deepcopy(sensor_data)
+            self.encoder_state_variable_last = copy.deepcopy(
+                self.state_variable_current)
         elif(sensor_type == "optical"):
             self.last_optical_data = copy.deepcopy(sensor_data)
+            self.ofs_state_variable_last = copy.deepcopy(
+                self.state_variable_current)
+        # self.imu_state_variable_last = copy.deepcopy(
+        #     self.state_variable_current)
         # print(f"update cost time{time.time()-start_time}")
         return self.state_variable_current
 
