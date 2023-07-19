@@ -375,7 +375,8 @@ class Robot:
                 continue
             sensor_data = recv_queue.get()
             if(sensor_data[0] == "imu"):
-                state_variable_predict = self.data_fusion2.Predict()
+                state_variable_predict = self.data_fusion2.Predict(
+                    sensor_data[1]["t"])
                 state_variable_update = self.data_fusion2.Update(
                     sensor_data[1], sensor_data[0])
                 if(not send_queue.full()):
@@ -735,10 +736,10 @@ class Datafusion2:
     file_num = 0
 
     def __init__(self) -> None:
-        self.Q = np.diag([0.001, 0.001, 0.001, 0.001, 0.001, 0.001])
+        self.Q = np.diag([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
         self.R_encoder = np.diag([0.01, 0.01])
         self.R_optcal = np.diag([0.1, 0.1])
-        self.R_imu = np.diag([0.1, 0.1, 0.1])
+        self.R_imu = np.diag([0.001, 0.001, 0.001])
         self.H_encoder = np.array(
             [[0, 0, 1/self.r, 0, self.b/self.r], [0, 0, 1/self.r, 0, -self.b/self.r]])
         self.H_encoder_jacobian = self.H_encoder
@@ -753,12 +754,13 @@ class Datafusion2:
                 break
         self.fid = open(data_file_name, 'a+')
 
-    def Predict(self):
-        current_time = time.time()
+    def Predict(self, current_time):
         if(self.state_variable_last_t == 0):
             self.state_variable_last_t = current_time
             return self.state_variable_current
         dt = current_time-self.state_variable_last_t
+        if(dt == 0):
+            return self.state_variable_current
         theta_t = self.state_variable_current[2]
         A = np.array([[1, 0, dt, 0, 0, 0],
                       [0, 1, 0, dt, 0, 0],
@@ -780,9 +782,11 @@ class Datafusion2:
                 self.fid.write(
                     f"imu_data:{imu_data['t']} {imu_data['ax']} {imu_data['ay']} {imu_data['az']} {imu_data['wx']} {imu_data['wy']} {imu_data['wz']}\n")
             if(self.last_imu_data["t"] == 0):
-                self.last_imu_data = imu_data
+                self.last_imu_data = copy.deepcopy(imu_data)
                 return self.state_variable_current
             dt = imu_data["t"]-self.last_imu_data["t"]
+            if(dt == 0):
+                return self.state_variable_current
             axt = (self.state_variable_current[2] -
                    self.state_variable_last[2])/dt
             ayt = (self.state_variable_current[3] -
@@ -804,6 +808,8 @@ class Datafusion2:
         self.state_variable_current = self.state_variable_current + correct_value
         self.Pt = self.Pt-kalman_gain@H@self.Pt
         self.last_Pt = copy.deepcopy(self.Pt)
+        if(sensor_type == "imu"):
+            self.last_imu_data = copy.deepcopy(sensor_data)
         return self.state_variable_current
 
 
