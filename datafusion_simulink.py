@@ -249,7 +249,7 @@ class App:
             # print(f"get pose data{temp_data}")
             dpg.set_value("raw_path",
                           [self.plot_raw_robot_data["px"], self.plot_raw_robot_data["py"]])
-            if(self.frame_counter % 10 == 0):
+            if(self.frame_counter % 2 == 0):
                 self.frame_counter = 0
                 # [min_x,min_y,max_x,max_y]
 
@@ -334,14 +334,16 @@ class Robot:
         self.sensor_list.append(self.wheel)
         self.optical = OpticalFlow(self.robot_sensor_queue)
         self.sensor_list.append(self.optical)
-        self.data_fusion = Datafusion()
-        self.data_fusion.SaveDataToFile()
+        # self.data_fusion = Datafusion()
+        # self.data_fusion.SaveDataToFile()
+        self.data_fusion2 = Datafusion2()
+        self.data_fusion2.SaveDataToFile()
         print("init robot")
 
     def StartRun(self):
         global stop_sensor_timer
         self.robot_run_start.value = 1
-        self.process = Process(target=self.RobotAlgo,
+        self.process = Process(target=self.RobotAlgo2,
                                args=(self.robot_run_start, self.robot_sensor_queue, algo_res_queue,))
         self.process.daemon
         self.process.start()
@@ -364,6 +366,24 @@ class Robot:
                 sensor_data)
             send_queue.put(
                 ['check_data', state_variable_predict[0], state_variable_predict[1]])
+
+    def RobotAlgo2(self, status, recv_queue, send_queue):
+        print("algo")
+        while(status.value):
+            if(recv_queue.empty()):
+                # time.sleep(0.001)
+                continue
+            sensor_data = recv_queue.get()
+            if(sensor_data[0] == "imu"):
+                state_variable_predict = self.data_fusion2.Predict()
+                state_variable_update = self.data_fusion2.Update(
+                    sensor_data[1], sensor_data[0])
+                if(not send_queue.full()):
+                    send_queue.put(
+                        ['predict_res', state_variable_predict[0], state_variable_predict[1]], block=False)
+                if(not send_queue.full()):
+                    send_queue.put(
+                        ['update_res', state_variable_update[0], state_variable_update[1]], block=False)
 
     def RobotAlgo(self, status, recv_queue, send_queue):
         state_variable = [0, 0, 0, 0, 0]
@@ -696,15 +716,48 @@ class Datafusion2:
         [0, 0, 0, 0, 0, 0])  # [xt,yt,vxt,vyt,theta_t,wt]
     state_variable_last = np.array(
         [0, 0, 0, 0, 0, 0])  # [xt,yt,vt,theta_t,wt]
-    state_variable_last_t = time.time()
+    state_variable_last_t = 0
     state_variable_predic = np.array(
         [0, 0, 0, 0, 0, 0])  # [xt,yt,vt,theta_t,wt]
-    P = np.eye(5)
     last_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
                      "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
+    last_optical_data = {"dx": 0, "dy": 0, "theta": 0, "t": 0}
+    last_encoder_data = {"nr": 0, "nl": 0, "theta": 0, "t": 0}
+    last_Pt = np.zeros(
+        (state_variable_current.shape[0], state_variable_current.shape[0]))
+    Pt = np.zeros(
+        (state_variable_current.shape[0], state_variable_current.shape[0]))
+    b = distance_center_to_wheel
+    r = wheel_radius
+    l = 0.10
+    save_data_to_file = 0
+    data_file_name_base = "data_fusion_sensor"
+    file_num = 0
+
+    def __init__(self) -> None:
+        self.Q = np.diag([0.001, 0.001, 0.001, 0.001, 0.001, 0.001])
+        self.R_encoder = np.diag([0.01, 0.01])
+        self.R_optcal = np.diag([0.1, 0.1])
+        self.R_imu = np.diag([0.1, 0.1, 0.1])
+        self.H_encoder = np.array(
+            [[0, 0, 1/self.r, 0, self.b/self.r], [0, 0, 1/self.r, 0, -self.b/self.r]])
+        self.H_encoder_jacobian = self.H_encoder
+
+    def SaveDataToFile(self):
+        self.save_data_to_file = 1
+        while(True):
+            data_file_name = f"{self.data_file_name_base}{self.file_num}.dat"
+            if os.path.exists(data_file_name):
+                self.file_num += 1
+            else:
+                break
+        self.fid = open(data_file_name, 'a+')
 
     def Predict(self):
         current_time = time.time()
+        if(self.state_variable_last_t == 0):
+            self.state_variable_last_t = current_time
+            return self.state_variable_current
         dt = current_time-self.state_variable_last_t
         theta_t = self.state_variable_current[2]
         A = np.array([[1, 0, dt, 0, 0, 0],
@@ -713,16 +766,45 @@ class Datafusion2:
                       [0, 0, 0, 1, 0, 0],
                       [0, 0, 0, 0, 1, dt],
                       [0, 0, 0, 0, 0, 1]])
-        self.state_variable_predic = A@self.state_variable_current
-        Q = np.diag([dt, dt, dt, dt, dt])
-        self.P = A @ self.P @ A.T + Q
+        self.state_variable_current = A@self.state_variable_current
+        self.Pt = A @ self.Pt @ A.T + self.Q
         self.state_variable_last_t = current_time
-        return self.state_variable_predic
+        # print(self.state_variable_current)
+        return self.state_variable_current
 
     def Update(self, sensor_data, sensor_type):
         if(sensor_type == "imu"):
             imu_data = sensor_data
+            if(self.save_data_to_file):
+                # with open("data_fusion_sensor.dat", 'a+')as fid:
+                self.fid.write(
+                    f"imu_data:{imu_data['t']} {imu_data['ax']} {imu_data['ay']} {imu_data['az']} {imu_data['wx']} {imu_data['wy']} {imu_data['wz']}\n")
+            if(self.last_imu_data["t"] == 0):
+                self.last_imu_data = imu_data
+                return self.state_variable_current
             dt = imu_data["t"]-self.last_imu_data["t"]
+            axt = (self.state_variable_current[2] -
+                   self.state_variable_last[2])/dt
+            ayt = (self.state_variable_current[3] -
+                   self.state_variable_last[3])/dt
+            theta_t = self.state_variable_current[4]
+            H = np.array([[0, 0, np.cos(theta_t)/dt, np.sin(theta_t)/dt, -axt*np.sin(theta_t)+ayt*np.cos(theta_t), 0],
+                          [0, 0, -np.sin(theta_t)/dt, np.cos(theta_t)/dt, -axt*np.cos(theta_t)-ayt*np.sin(theta_t), 0], [0, 0, 0, 0, 0, 1]])
+            R = self.R_imu
+            sensor_data_array = np.array(
+                [sensor_data["ax"], sensor_data['ay'], sensor_data['wz']])
+            Z = np.array([axt*np.cos(theta_t)+ayt*np.sin(theta_t), ayt *
+                         np.cos(theta_t)-axt*np.sin(theta_t), self.state_variable_current[-1]])
+            error = sensor_data_array-Z
+        temp_P = H@self.Pt@H.T+R  # (2x2)
+        kalman_gain = self.Pt@H.T@np.linalg.inv(temp_P)  # (5x2)
+        correct_value = kalman_gain@(error)
+        # print(f"kalman:{kalman_gain}")
+        # print(f"correct:{correct_value}")
+        self.state_variable_current = self.state_variable_current + correct_value
+        self.Pt = self.Pt-kalman_gain@H@self.Pt
+        self.last_Pt = copy.deepcopy(self.Pt)
+        return self.state_variable_current
 
 
 class Datafusion:
