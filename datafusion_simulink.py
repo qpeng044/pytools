@@ -154,8 +154,7 @@ class App:
                                   tag=f"simulink_plot_y_axis")
                 dpg.add_line_series(
                     x=self.plot_raw_robot_data["px"], y=self.plot_raw_robot_data["py"], tag="raw_path", parent=f"simulink_plot_y_axis")
-                dpg.add_line_series(
-                    x=self.ekf_path["x"], y=self.ekf_path["y"], tag="EKF_path", parent=f"simulink_plot_y_axis")
+                dpg.set_item_label("raw_path", "raw_path")
         dpg.set_viewport_resize_callback(self.viewport_resize_callback)
         dpg.show_viewport()
         dpg.set_primary_window("Primary Window", True)
@@ -226,7 +225,7 @@ class App:
             for key in self.plot_raw_robot_data.keys():
                 self.plot_raw_robot_data[key].append(
                     temp_data[key])
-        if(not algo_res_queue.empty()):
+        while not algo_res_queue.empty():
             temp_data = algo_res_queue.get()
             # print(f"get algo data{temp_data}")
             if not temp_data[0] in self.res_plot_data.keys():
@@ -378,7 +377,7 @@ class Robot:
                 state_variable_predict = self.data_fusion2.Predict(
                     sensor_data[1]["t"])
                 state_variable_update = self.data_fusion2.Update(
-                    sensor_data[1], sensor_data[0])
+                    sensor_data[2], sensor_data[0])
                 if(not send_queue.full()):
                     send_queue.put(
                         ['predict_res', state_variable_predict[0], state_variable_predict[1]], block=False)
@@ -523,7 +522,7 @@ class ImuSensor(Sensor):
                            "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
     real_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
                      "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
-    imu_nosie = {"ax_n": [0, 0.004], "ay_n": [0, 0.004], "az_n": [0, 0.004], "wx_n": [
+    imu_nosie = {"ax_n": [0, 0.04], "ay_n": [0, 0.04], "az_n": [0, 0.004], "wx_n": [
         0, 0.005], "wy_n": [0, 0.005], "wz_n": [0, 0.005]}  # [mean,var]
     noise_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
                       "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
@@ -800,6 +799,8 @@ class Datafusion2:
             Z = np.array([axt*np.cos(theta_t)+ayt*np.sin(theta_t), ayt *
                          np.cos(theta_t)-axt*np.sin(theta_t), self.state_variable_current[-1]])
             error = sensor_data_array-Z
+        if(sensor_type == "encoder"):
+            pass
         temp_P = H@self.Pt@H.T+R  # (2x2)
         kalman_gain = self.Pt@H.T@np.linalg.inv(temp_P)  # (5x2)
         correct_value = kalman_gain@(error)
@@ -808,6 +809,7 @@ class Datafusion2:
         self.state_variable_current = self.state_variable_current + correct_value
         self.Pt = self.Pt-kalman_gain@H@self.Pt
         self.last_Pt = copy.deepcopy(self.Pt)
+        self.state_variable_last = copy.deepcopy(self.state_variable_current)
         if(sensor_type == "imu"):
             self.last_imu_data = copy.deepcopy(sensor_data)
         return self.state_variable_current
