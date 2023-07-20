@@ -373,7 +373,7 @@ class Robot:
                 # time.sleep(0.001)
                 continue
             sensor_data = recv_queue.get()
-            if(sensor_data[0] == "imu"):
+            if(sensor_data[0] == "imu" or sensor_data[0] == "encoder"):
                 state_variable_predict = self.data_fusion2.Predict(
                     sensor_data[1]["t"])
                 state_variable_update = self.data_fusion2.Update(
@@ -522,7 +522,7 @@ class ImuSensor(Sensor):
                            "vr": 0, "vl": 0, "v": 0, "theta": 0, "t": 0}
     real_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
                      "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
-    imu_nosie = {"ax_n": [0, 0.04], "ay_n": [0, 0.04], "az_n": [0, 0.004], "wx_n": [
+    imu_nosie = {"ax_n": [0, 0.4], "ay_n": [0, 0.4], "az_n": [0, 0.004], "wx_n": [
         0, 0.005], "wy_n": [0, 0.005], "wz_n": [0, 0.005]}  # [mean,var]
     noise_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
                       "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
@@ -644,7 +644,7 @@ class WheelEncoder(Sensor):
         self.last_raw_robot_data = copy.deepcopy(
             self.current_raw_robot_data)
         self.robot_queue.put(
-            ["encoder", self.real_wheel_data])
+            ["encoder", self.real_wheel_data, self.real_wheel_data])
 
 
 class OpticalFlow(Sensor):
@@ -739,9 +739,6 @@ class Datafusion2:
         self.R_encoder = np.diag([0.01, 0.01])
         self.R_optcal = np.diag([0.1, 0.1])
         self.R_imu = np.diag([0.001, 0.001, 0.001])
-        self.H_encoder = np.array(
-            [[0, 0, 1/self.r, 0, self.b/self.r], [0, 0, 1/self.r, 0, -self.b/self.r]])
-        self.H_encoder_jacobian = self.H_encoder
 
     def SaveDataToFile(self):
         self.save_data_to_file = 1
@@ -800,7 +797,27 @@ class Datafusion2:
                          np.cos(theta_t)-axt*np.sin(theta_t), self.state_variable_current[-1]])
             error = sensor_data_array-Z
         if(sensor_type == "encoder"):
-            pass
+            if(self.last_encoder_data["t"] == 0):
+                self.last_encoder_data = copy.deepcopy(sensor_data)
+                return self.state_variable_current
+            dt = sensor_data["t"]-self.last_encoder_data["t"]
+            if(dt == 0):
+                return self.state_variable_current
+            vt = np.sqrt(self.state_variable_current[2]*self.state_variable_current[2] +
+                         self.state_variable_current[3]*self.state_variable_current[3])
+
+            if(vt <= 0.00001):
+                H = np.array([[0, 0, 0, 0, 0, self.b],
+                              [0, 0, 0, 0, 0, -self.b]])
+            else:
+                H = np.array([[0, 0, self.state_variable_current[2]/vt, self.state_variable_current[3]/vt, 0, self.b],
+                              [0, 0, self.state_variable_current[2]/vt, self.state_variable_current[3]/vt, 0, -self.b]])
+            R = self.R_encoder
+            sensor_data_array = np.array(
+                [sensor_data["nr"]*2*np.pi/encoder_resolution, sensor_data['nl']*2*np.pi/encoder_resolution])
+            Z = np.array([vt+self.b*self.state_variable_current[-1],
+                         vt-self.b*self.state_variable_current[-1]])/self.r
+            error = sensor_data_array-Z
         temp_P = H@self.Pt@H.T+R  # (2x2)
         kalman_gain = self.Pt@H.T@np.linalg.inv(temp_P)  # (5x2)
         correct_value = kalman_gain@(error)
@@ -812,6 +829,8 @@ class Datafusion2:
         self.state_variable_last = copy.deepcopy(self.state_variable_current)
         if(sensor_type == "imu"):
             self.last_imu_data = copy.deepcopy(sensor_data)
+        if(sensor_type == "encoder"):
+            self.last_encoder_data = copy.deepcopy(sensor_data)
         return self.state_variable_current
 
 
