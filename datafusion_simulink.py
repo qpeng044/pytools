@@ -823,7 +823,29 @@ class Datafusion2:
                          vt-self.b*self.state_variable_current[-1]])/self.r
             error = sensor_data_array-Z
             print(f"error:{error},vt{vt}")
-        if(sensor_type == "encoder"):
+        if(sensor_type == "encoder33"):
+            if(self.save_data_to_file):
+                # with open("data_fusion_sensor.dat", 'a+')as fid:
+                self.fid.write(
+                    f"encoder_data:{sensor_data['t']} {sensor_data['nl']} {sensor_data['nr']}\n")
+            if(self.last_encoder_data["t"] == 0):
+                self.last_encoder_data = copy.deepcopy(sensor_data)
+                return self.state_variable_current
+            dt = sensor_data["t"]-self.last_encoder_data["t"]
+            if(dt == 0):
+                return self.state_variable_current
+            theta_t = self.state_variable_current[4]
+            A = np.array([[0, 0], [0, 0], [np.cos(theta_t)*self.r/2, np.cos(theta_t)*self.r/2], [np.sin(
+                theta_t)*self.r/2, np.sin(theta_t)*self.r/2], [0, 0], [self.r/self.b, -self.r/self.b]])
+            H=np.linalg.inv(A)
+            R = self.R_encoder
+            sensor_data_array = np.array(
+                [sensor_data["nr"]*2*np.pi*self.r/encoder_resolution/dt, sensor_data['nl']*2*np.pi*self.r/encoder_resolution/dt])
+            Z = np.array([ddt+self.b*dtheta,
+                         ddt-self.b*dtheta])
+            error = sensor_data_array-Z
+            print(f"error:{error},ddt{ddt}")
+        if(sensor_type == "encoder33"):
             if(self.save_data_to_file):
                 # with open("data_fusion_sensor.dat", 'a+')as fid:
                 self.fid.write(
@@ -853,6 +875,7 @@ class Datafusion2:
                          ddt-self.b*dtheta])
             error = sensor_data_array-Z
             print(f"error:{error},ddt{ddt}")
+
         temp_P = H@self.Pt@H.T+R  # (2x2)
         kalman_gain = self.Pt@H.T@np.linalg.inv(temp_P)  # (5x2)
         correct_value = kalman_gain@(error)
