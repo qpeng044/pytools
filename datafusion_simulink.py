@@ -577,7 +577,7 @@ class ImuSensor(Sensor):
         ######
         self.last_raw_robot_data = copy.deepcopy(
             self.current_raw_robot_data)
-        self.robot_queue.put(["imu", self.real_imu_data, self.noise_imu_data])
+        # self.robot_queue.put(["imu", self.real_imu_data, self.noise_imu_data])
 
 
 class WheelEncoder(Sensor):
@@ -796,33 +796,68 @@ class Datafusion2:
             Z = np.array([axt*np.cos(theta_t)+ayt*np.sin(theta_t), ayt *
                          np.cos(theta_t)-axt*np.sin(theta_t), self.state_variable_current[-1]])
             error = sensor_data_array-Z
-        if(sensor_type == "encoder"):
+        if(sensor_type == "encoder22"):
+            if(self.save_data_to_file):
+                # with open("data_fusion_sensor.dat", 'a+')as fid:
+                self.fid.write(
+                    f"encoder_data:{sensor_data['t']} {sensor_data['nl']} {sensor_data['nr']}\n")
             if(self.last_encoder_data["t"] == 0):
                 self.last_encoder_data = copy.deepcopy(sensor_data)
                 return self.state_variable_current
             dt = sensor_data["t"]-self.last_encoder_data["t"]
             if(dt == 0):
                 return self.state_variable_current
-            vt = np.sqrt(self.state_variable_current[2]*self.state_variable_current[2] +
-                         self.state_variable_current[3]*self.state_variable_current[3])
+            vt = np.float64(np.sqrt(self.state_variable_current[2]*self.state_variable_current[2] +
+                                    self.state_variable_current[3]*self.state_variable_current[3]))
 
             if(vt <= 0.00001):
-                H = np.array([[0, 0, 0, 0, 0, self.b],
-                              [0, 0, 0, 0, 0, -self.b]])
+                H = np.array([[0, 0, 1/self.r, 1/self.r, 0, self.b/self.r],
+                              [0, 0, 1/self.r, 1/self.r, 0, -self.b/self.r]])
             else:
-                H = np.array([[0, 0, self.state_variable_current[2]/vt, self.state_variable_current[3]/vt, 0, self.b],
-                              [0, 0, self.state_variable_current[2]/vt, self.state_variable_current[3]/vt, 0, -self.b]])
+                H = np.array([[0, 0, self.state_variable_current[2]/vt/self.r, self.state_variable_current[3]/vt/self.r, 0, self.b/self.r],
+                              [0, 0, self.state_variable_current[2]/vt/self.r, self.state_variable_current[3]/vt/self.r, 0, -self.b/self.r]])
             R = self.R_encoder
             sensor_data_array = np.array(
-                [sensor_data["nr"]*2*np.pi/encoder_resolution, sensor_data['nl']*2*np.pi/encoder_resolution])
+                [sensor_data["nr"]*2*np.pi/encoder_resolution/dt, sensor_data['nl']*2*np.pi/encoder_resolution/dt])
             Z = np.array([vt+self.b*self.state_variable_current[-1],
                          vt-self.b*self.state_variable_current[-1]])/self.r
             error = sensor_data_array-Z
+            print(f"error:{error},vt{vt}")
+        if(sensor_type == "encoder"):
+            if(self.save_data_to_file):
+                # with open("data_fusion_sensor.dat", 'a+')as fid:
+                self.fid.write(
+                    f"encoder_data:{sensor_data['t']} {sensor_data['nl']} {sensor_data['nr']}\n")
+            if(self.last_encoder_data["t"] == 0):
+                self.last_encoder_data = copy.deepcopy(sensor_data)
+                return self.state_variable_current
+            dt = sensor_data["t"]-self.last_encoder_data["t"]
+            if(dt == 0):
+                return self.state_variable_current
+            dxt = self.state_variable_current[0]-self.state_variable_last[0]
+            dyt = self.state_variable_current[1]-self.state_variable_last[1]
+            ddt = np.float64(np.sqrt((dxt)**2 + (dyt)**2))
+            dtheta = self.state_variable_current[-2] - \
+                self.state_variable_last[-2]
+
+            if(ddt <= 0.00001):
+                H = np.array([[1, 1, 0, 0, self.b, 0],
+                              [1, 1, 0, 0, -self.b, 0]])
+            else:
+                H = np.array([[dxt/ddt, dyt/ddt, 0, 0, self.b, 0],
+                              [dxt/ddt, dyt/ddt, 0, 0, -self.b, 0]])
+            R = self.R_encoder
+            sensor_data_array = np.array(
+                [sensor_data["nr"]*2*np.pi*self.r/encoder_resolution/dt, sensor_data['nl']*2*np.pi*self.r/encoder_resolution/dt])
+            Z = np.array([ddt+self.b*dtheta,
+                         ddt-self.b*dtheta])
+            error = sensor_data_array-Z
+            print(f"error:{error},ddt{ddt}")
         temp_P = H@self.Pt@H.T+R  # (2x2)
         kalman_gain = self.Pt@H.T@np.linalg.inv(temp_P)  # (5x2)
         correct_value = kalman_gain@(error)
         # print(f"kalman:{kalman_gain}")
-        # print(f"correct:{correct_value}")
+        print(f"correct:{correct_value}")
         self.state_variable_current = self.state_variable_current + correct_value
         self.Pt = self.Pt-kalman_gain@H@self.Pt
         self.last_Pt = copy.deepcopy(self.Pt)
