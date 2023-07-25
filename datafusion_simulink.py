@@ -43,7 +43,7 @@ generation_queue = Queue(10)
 app_queue = Queue(2)
 
 
-algo_res_queue = Queue(2)
+algo_res_queue = Queue(6)
 # sensor_timer = sched.scheduler(time.time, time.sleep)
 stop_sensor_timer = Value('i', 0)
 
@@ -337,6 +337,7 @@ class Robot:
         # self.data_fusion.SaveDataToFile()
         self.data_fusion2 = Datafusion2()
         self.data_fusion2.SaveDataToFile()
+        self.direct_pose = DrectPose()
         print("init robot")
 
     def StartRun(self):
@@ -378,12 +379,18 @@ class Robot:
                     sensor_data[1]["t"])
                 state_variable_update = self.data_fusion2.Update(
                     sensor_data[2], sensor_data[0])
+                # no_filter_res = self.direct_pose.GetPose(
+                #     [sensor_data[0], sensor_data[2]])
                 if(not send_queue.full()):
                     send_queue.put(
                         ['predict_res', state_variable_predict[0], state_variable_predict[1]], block=False)
                 if(not send_queue.full()):
                     send_queue.put(
                         ['update_res', state_variable_update[0], state_variable_update[1]], block=False)
+                # if(not send_queue.full()):
+                #     send_queue.put(
+                #         ['no_filter_res', no_filter_res[0], no_filter_res[1]], block=False)
+                # print(no_filter_res[0], no_filter_res[1])
 
     def RobotAlgo(self, status, recv_queue, send_queue):
         state_variable = [0, 0, 0, 0, 0]
@@ -735,10 +742,11 @@ class Datafusion2:
     file_num = 0
 
     def __init__(self) -> None:
-        self.Q = np.diag([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
-        self.R_encoder = np.diag([0.01, 0.01])
+        self.Q = np.diag([0.1, 0.1, 0.1,
+                         0.1, 0.1, 0.1])
+        self.R_encoder = np.diag([0.001, 0.001])
         self.R_optcal = np.diag([0.1, 0.1])
-        self.R_imu = np.diag([0.001, 0.001, 0.001])
+        self.R_imu = np.diag([0.1, 0.1, 0.1])
 
     def SaveDataToFile(self):
         self.save_data_to_file = 1
@@ -837,7 +845,7 @@ class Datafusion2:
             theta_t = self.state_variable_current[4]
             A = np.array([[0, 0], [0, 0], [np.cos(theta_t)*self.r/2, np.cos(theta_t)*self.r/2], [np.sin(
                 theta_t)*self.r/2, np.sin(theta_t)*self.r/2], [0, 0], [self.r/self.b, -self.r/self.b]])
-            H=np.linalg.inv(A)
+            H = np.linalg.inv(A)
             R = self.R_encoder
             sensor_data_array = np.array(
                 [sensor_data["nr"]*2*np.pi*self.r/encoder_resolution/dt, sensor_data['nl']*2*np.pi*self.r/encoder_resolution/dt])
@@ -845,7 +853,7 @@ class Datafusion2:
                          ddt-self.b*dtheta])
             error = sensor_data_array-Z
             print(f"error:{error},ddt{ddt}")
-        if(sensor_type == "encoder33"):
+        if(sensor_type == "encoder"):
             if(self.save_data_to_file):
                 # with open("data_fusion_sensor.dat", 'a+')as fid:
                 self.fid.write(
@@ -859,18 +867,13 @@ class Datafusion2:
             dxt = self.state_variable_current[0]-self.state_variable_last[0]
             dyt = self.state_variable_current[1]-self.state_variable_last[1]
             ddt = np.float64(np.sqrt((dxt)**2 + (dyt)**2))
-            dtheta = self.state_variable_current[-2] - \
-                self.state_variable_last[-2]
+            dtheta = self.state_variable_current[-1]*dt
 
-            if(ddt <= 0.00001):
-                H = np.array([[1, 1, 0, 0, self.b, 0],
-                              [1, 1, 0, 0, -self.b, 0]])
-            else:
-                H = np.array([[dxt/ddt, dyt/ddt, 0, 0, self.b, 0],
-                              [dxt/ddt, dyt/ddt, 0, 0, -self.b, 0]])
+            H = np.array([[np.cos(dtheta/2+self.state_variable_last[-2]), np.sin(dtheta/2+self.state_variable_last[-2]), 0, 0, 0, self.b*dt],
+                          [np.cos(dtheta/2+self.state_variable_last[-2]), np.sin(dtheta/2+self.state_variable_last[-2]), 0, 0, 0, -self.b*dt]])
             R = self.R_encoder
             sensor_data_array = np.array(
-                [sensor_data["nr"]*2*np.pi*self.r/encoder_resolution/dt, sensor_data['nl']*2*np.pi*self.r/encoder_resolution/dt])
+                [sensor_data["nr"]*2*np.pi*self.r/encoder_resolution, sensor_data['nl']*2*np.pi*self.r/encoder_resolution])
             Z = np.array([ddt+self.b*dtheta,
                          ddt-self.b*dtheta])
             error = sensor_data_array-Z
@@ -890,6 +893,69 @@ class Datafusion2:
         if(sensor_type == "encoder"):
             self.last_encoder_data = copy.deepcopy(sensor_data)
         return self.state_variable_current
+
+
+class DrectPose:
+    state_variable_current = np.array(
+        [0, 0, 0, 0, 0, 0])  # [xt,yt,vxt,vyt,theta_t,wt]
+    state_variable_last = np.array(
+        [0, 0, 0, 0, 0, 0])  # [xt,yt,vt,theta_t,wt]
+    state_variable_last_t = 0
+    state_variable_predic = np.array(
+        [0, 0, 0, 0, 0, 0])  # [xt,yt,vt,theta_t,wt]
+    last_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
+                     "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
+    last_optical_data = {"dx": 0, "dy": 0, "theta": 0, "t": 0}
+    last_encoder_data = {"nr": 0, "nl": 0, "theta": 0, "t": 0}
+    last_Pt = np.zeros(
+        (state_variable_current.shape[0], state_variable_current.shape[0]))
+    Pt = np.zeros(
+        (state_variable_current.shape[0], state_variable_current.shape[0]))
+    b = distance_center_to_wheel
+    r = wheel_radius
+    l = 0.10
+    save_data_to_file = 0
+    data_file_name_base = "data_fusion_sensor"
+    file_num = 0
+
+    def SaveDataToFile(self):
+        self.save_data_to_file = 1
+        while(True):
+            data_file_name = f"{self.data_file_name_base}{self.file_num}.dat"
+            if os.path.exists(data_file_name):
+                self.file_num += 1
+            else:
+                break
+
+        self.fid = open(data_file_name, 'a+')
+
+    def GetPose(self, sensor_data):
+        if(sensor_data[0] == "imu"):
+            imu_data = sensor_data[1]
+            if(self.last_imu_data["t"] == 0):
+                self.last_imu_data = copy.deepcopy(imu_data)
+                return self.state_variable_current
+            dt = imu_data["t"]-self.last_imu_data["t"]
+            dtheta = (imu_data["wz"]+self.last_imu_data["wz"])*dt/2
+            theta_t = self.state_variable_last[4]+dtheta
+            wt = imu_data["wz"]
+            vxt = imu_data["ax"]*np.cos(theta_t)*dt-imu_data["ay"] * \
+                np.cos(np.pi/2-theta_t)*dt+self.state_variable_last[2]
+            vyt = imu_data["ax"]*np.sin(theta_t)*dt+imu_data["ay"] * \
+                np.sin(np.pi/2-theta_t)*dt+self.state_variable_last[3]
+            xt = self.state_variable_last[0] + \
+                (vxt+self.state_variable_last[2])*dt/2
+            yt = self.state_variable_last[1] + \
+                (vyt+self.state_variable_last[3])*dt/2
+            self.state_variable_current = np.array(
+                [xt, yt, vxt, vyt, theta_t, wt], dtype=np.float32)
+            # print(self.state_variable_last)
+            # print("vxt:%f  vyt:%f   ax:%f   ay:%f   theta:%f    dt:%f" %
+            #       (vxt, vyt, imu_data["ax"], imu_data["ay"], theta_t, dt))
+            self.last_imu_data = copy.deepcopy(imu_data)
+            self.state_variable_last = copy.deepcopy(
+                self.state_variable_current)
+            return self.state_variable_current
 
 
 class Datafusion:
