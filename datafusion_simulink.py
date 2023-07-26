@@ -374,11 +374,11 @@ class Robot:
                 # time.sleep(0.001)
                 continue
             sensor_data = recv_queue.get()
-            if(sensor_data[0] == "imu" or sensor_data[0] == "encoder"):
+            if(sensor_data[0] == "imu" or sensor_data[0] == "encoder" or sensor_data[0] == "optical"):
                 state_variable_predict = self.data_fusion2.Predict(
                     sensor_data[1]["t"])
                 state_variable_update = self.data_fusion2.Update(
-                    sensor_data[2], sensor_data[0])
+                    sensor_data[1], sensor_data[0])
                 # no_filter_res = self.direct_pose.GetPose(
                 #     [sensor_data[0], sensor_data[2]])
                 if(not send_queue.full()):
@@ -650,8 +650,8 @@ class WheelEncoder(Sensor):
         #       self.noise_wheel_data['vr'], self.noise_wheel_data['vl'])
         self.last_raw_robot_data = copy.deepcopy(
             self.current_raw_robot_data)
-        self.robot_queue.put(
-            ["encoder", self.real_wheel_data, self.real_wheel_data])
+        # self.robot_queue.put(
+        #     ["encoder", self.real_wheel_data, self.real_wheel_data])
 
 
 class OpticalFlow(Sensor):
@@ -723,6 +723,8 @@ class Datafusion2:
         [0, 0, 0, 0, 0, 0])  # [xt,yt,vxt,vyt,theta_t,wt]
     state_variable_last = np.array(
         [0, 0, 0, 0, 0, 0])  # [xt,yt,vt,theta_t,wt]
+    ofs_state_variable_last = np.array(
+        [0, 0, 0, 0, 0, 0])  # [xt,yt,vt,theta_t,wt]
     state_variable_last_t = 0
     state_variable_predic = np.array(
         [0, 0, 0, 0, 0, 0])  # [xt,yt,vt,theta_t,wt]
@@ -745,7 +747,7 @@ class Datafusion2:
         self.Q = np.diag([0.1, 0.1, 0.1,
                          0.1, 0.1, 0.1])
         self.R_encoder = np.diag([0.001, 0.001])
-        self.R_optcal = np.diag([0.1, 0.1])
+        self.R_optcal = np.diag([0.0001, 0.0001])
         self.R_imu = np.diag([0.1, 0.1, 0.1])
 
     def SaveDataToFile(self):
@@ -878,20 +880,46 @@ class Datafusion2:
                          ddt-self.b*dtheta])
             error = sensor_data_array-Z
             print(f"error:{error},ddt{ddt}")
+        elif(sensor_type == "optical"):
+            if(self.save_data_to_file):
+                # with open("data_fusion_sensor.dat", 'a+')as fid:
+                # print(sensor_data)
+                self.fid.write(
+                    f"optical_data:{sensor_data['t']} {sensor_data['dx']} {sensor_data['dy']}\n")
+            if(self.last_optical_data["t"] == 0):
+                self.last_optical_data = copy.deepcopy(sensor_data)
+                return self.state_variable_current
+            dt = sensor_data["t"]-self.last_optical_data["t"]
+            R = self.R_optcal
+            sensor_data_array = np.array(
+                [sensor_data["dx"], sensor_data['dy']])
+            dx = self.state_variable_current[0]-self.ofs_state_variable_last[0]
+            dy = self.state_variable_current[1]-self.ofs_state_variable_last[1]
+            dd = np.sqrt(dx**2+dy**2)
+            dtheta = self.ofs_state_variable_last[4]*dt
+            H = np.array([[np.cos(self.state_variable_last[-2]+dtheta/2)*np.cos(dtheta/2), np.sin(self.state_variable_last[-2]+dtheta/2)*np.cos(dtheta/2), 0, 0, dd*np.sin(dtheta/2)/2, 0], [
+                np.cos(self.state_variable_last[-2]+dtheta/2)*np.sin(dtheta/2), np.sin(self.state_variable_last[-2]+dtheta/2)*np.sin(dtheta/2), 0, 0, dd*np.cos(dtheta/2)/2, 0]])
+            Z = np.array([np.cos(dtheta/2)*dd, dd*np.sin(dtheta/2)])
+            error = sensor_data_array-Z
 
         temp_P = H@self.Pt@H.T+R  # (2x2)
-        kalman_gain = self.Pt@H.T@np.linalg.inv(temp_P)  # (5x2)
+        kalman_gain = self.Pt@H.T@np.linalg.inv(temp_P)  # (6x2)
         correct_value = kalman_gain@(error)
         # print(f"kalman:{kalman_gain}")
         print(f"correct:{correct_value}")
         self.state_variable_current = self.state_variable_current + correct_value
         self.Pt = self.Pt-kalman_gain@H@self.Pt
+
         self.last_Pt = copy.deepcopy(self.Pt)
         self.state_variable_last = copy.deepcopy(self.state_variable_current)
         if(sensor_type == "imu"):
             self.last_imu_data = copy.deepcopy(sensor_data)
         if(sensor_type == "encoder"):
             self.last_encoder_data = copy.deepcopy(sensor_data)
+        if(sensor_type == "optical"):
+            self.last_optical_data = copy.deepcopy(sensor_data)
+            self.ofs_state_variable_last = copy.deepcopy(
+                self.state_variable_current)
         return self.state_variable_current
 
 
