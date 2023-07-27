@@ -650,8 +650,8 @@ class WheelEncoder(Sensor):
         #       self.noise_wheel_data['vr'], self.noise_wheel_data['vl'])
         self.last_raw_robot_data = copy.deepcopy(
             self.current_raw_robot_data)
-        # self.robot_queue.put(
-        #     ["encoder", self.real_wheel_data, self.real_wheel_data])
+        self.robot_queue.put(
+            ["encoder", self.real_wheel_data, self.real_wheel_data])
 
 
 class OpticalFlow(Sensor):
@@ -880,7 +880,7 @@ class Datafusion2:
                          ddt-self.b*dtheta])
             error = sensor_data_array-Z
             print(f"error:{error},ddt{ddt}")
-        elif(sensor_type == "optical"):
+        elif(sensor_type == "optical00"):
             if(self.save_data_to_file):
                 # with open("data_fusion_sensor.dat", 'a+')as fid:
                 # print(sensor_data)
@@ -901,12 +901,32 @@ class Datafusion2:
                 np.cos(self.state_variable_last[-2]+dtheta/2)*np.sin(dtheta/2), np.sin(self.state_variable_last[-2]+dtheta/2)*np.sin(dtheta/2), 0, 0, dd*np.cos(dtheta/2)/2, 0]])
             Z = np.array([np.cos(dtheta/2)*dd, dd*np.sin(dtheta/2)])
             error = sensor_data_array-Z
-
+        elif(sensor_type == "optical"):
+            if(self.save_data_to_file):
+                # with open("data_fusion_sensor.dat", 'a+')as fid:
+                # print(sensor_data)
+                self.fid.write(
+                    f"optical_data:{sensor_data['t']} {sensor_data['dx']} {sensor_data['dy']}\n")
+            if(self.last_optical_data["t"] == 0):
+                self.last_optical_data = copy.deepcopy(sensor_data)
+                return self.state_variable_current
+            dt = sensor_data["t"]-self.last_optical_data["t"]
+            R = self.R_optcal
+            sensor_data_array = np.array(
+                [sensor_data["dx"], sensor_data['dy']])
+            dx = self.state_variable_current[2]*dt
+            dy = self.state_variable_current[3]*dt
+            dd = np.sqrt(dx**2+dy**2)
+            dtheta = self.ofs_state_variable_last[4]*dt
+            H = np.array([[0, 0, np.cos(self.state_variable_last[-2]+dtheta/2)*np.cos(dtheta/2), np.sin(self.state_variable_last[-2]+dtheta/2)*np.cos(dtheta/2), 0,  -dd*np.sin(dtheta/2)/2], [
+                0, 0, np.cos(self.state_variable_last[-2]+dtheta/2)*np.sin(dtheta/2), np.sin(self.state_variable_last[-2]+dtheta/2)*np.sin(dtheta/2), 0,  dd*np.cos(dtheta/2)/2]])*dt
+            Z = np.array([np.cos(dtheta/2)*dd, dd*np.sin(dtheta/2)])
+            error = sensor_data_array-Z
         temp_P = H@self.Pt@H.T+R  # (2x2)
         kalman_gain = self.Pt@H.T@np.linalg.inv(temp_P)  # (6x2)
         correct_value = kalman_gain@(error)
         # print(f"kalman:{kalman_gain}")
-        print(f"correct:{correct_value}")
+        # print(f"correct:{correct_value}")
         self.state_variable_current = self.state_variable_current + correct_value
         self.Pt = self.Pt-kalman_gain@H@self.Pt
 
