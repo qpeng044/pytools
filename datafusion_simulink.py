@@ -47,9 +47,9 @@ algo_res_queue = Queue(6)
 # sensor_timer = sched.scheduler(time.time, time.sleep)
 stop_sensor_timer = Value('i', 0)
 
-imu_odr = 0.001  # 1ms
-wheel_odr = 0.001
-optical_odr = 0.01
+imu_odr = 0.1  # 1ms
+wheel_odr = 0.1
+optical_odr = 0.1
 
 
 class Sensor:
@@ -584,7 +584,7 @@ class ImuSensor(Sensor):
         ######
         self.last_raw_robot_data = copy.deepcopy(
             self.current_raw_robot_data)
-        # self.robot_queue.put(["imu", self.real_imu_data, self.noise_imu_data])
+        self.robot_queue.put(["imu", self.real_imu_data, self.noise_imu_data])
 
 
 class WheelEncoder(Sensor):
@@ -650,8 +650,8 @@ class WheelEncoder(Sensor):
         #       self.noise_wheel_data['vr'], self.noise_wheel_data['vl'])
         self.last_raw_robot_data = copy.deepcopy(
             self.current_raw_robot_data)
-        self.robot_queue.put(
-            ["encoder", self.real_wheel_data, self.real_wheel_data])
+        # self.robot_queue.put(
+        #     ["encoder", self.real_wheel_data, self.real_wheel_data])
 
 
 class OpticalFlow(Sensor):
@@ -714,8 +714,8 @@ class OpticalFlow(Sensor):
         self.last_raw_robot_data = copy.deepcopy(
             self.current_raw_robot_data)
 
-        self.robot_queue.put(
-            ["optical", self.real_optical_data, self.noise_optical_data])
+        # self.robot_queue.put(
+        #     ["optical", self.real_optical_data, self.noise_optical_data])
 
 
 class Datafusion2:
@@ -880,7 +880,7 @@ class Datafusion2:
                          ddt-self.b*dtheta])
             error = sensor_data_array-Z
             print(f"error:{error},ddt{ddt}")
-        elif(sensor_type == "optical00"):
+        elif(sensor_type == "optical"):
             if(self.save_data_to_file):
                 # with open("data_fusion_sensor.dat", 'a+')as fid:
                 # print(sensor_data)
@@ -901,7 +901,7 @@ class Datafusion2:
                 np.cos(self.state_variable_last[-2]+dtheta/2)*np.sin(dtheta/2), np.sin(self.state_variable_last[-2]+dtheta/2)*np.sin(dtheta/2), 0, 0, dd*np.cos(dtheta/2)/2, 0]])
             Z = np.array([np.cos(dtheta/2)*dd, dd*np.sin(dtheta/2)])
             error = sensor_data_array-Z
-        elif(sensor_type == "optical"):
+        elif(sensor_type == "optical00"):
             if(self.save_data_to_file):
                 # with open("data_fusion_sensor.dat", 'a+')as fid:
                 # print(sensor_data)
@@ -1006,6 +1006,7 @@ class DrectPose:
             return self.state_variable_current
 
 
+'''
 class Datafusion:
     state_variable_current = np.array(
         [0, 0, 0, 0, 0])  # [xt,yt,vt,thetat,wt]
@@ -1237,7 +1238,7 @@ class Datafusion:
         # print(f"update cost time{time.time()-start_time}")
         return self.state_variable_current
 
-
+'''
 if __name__ == "__main__":
     control_robot_position_data_dict = Manager().dict({"px": 0, "py": 0, "vr":
                                                        0, "vl": 0, "v": 0, "theta": 0, "ax": 0, "ay": 0, "t": 0})
