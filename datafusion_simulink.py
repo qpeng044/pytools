@@ -584,7 +584,7 @@ class ImuSensor(Sensor):
         ######
         self.last_raw_robot_data = copy.deepcopy(
             self.current_raw_robot_data)
-        self.robot_queue.put(["imu", self.real_imu_data, self.noise_imu_data])
+        # self.robot_queue.put(["imu", self.real_imu_data, self.noise_imu_data])
 
 
 class WheelEncoder(Sensor):
@@ -626,8 +626,8 @@ class WheelEncoder(Sensor):
             self.current_raw_robot_data["py"]-self.last_raw_robot_data["py"])**2)
         dr = dd+dtheta*self.distance_to_center
         dl = dd-dtheta*self.distance_to_center
-        self.real_wheel_data["nr"] = dr*encoder_resolution/(self.r*2*np.pi)
-        self.real_wheel_data["nl"] = dl*encoder_resolution/(self.r*2*np.pi)
+        self.real_wheel_data["nr"] = dr
+        self.real_wheel_data["nl"] = dl
         self.real_wheel_data['t'] = self.current_raw_robot_data['t']
 
         ####old method####
@@ -650,8 +650,8 @@ class WheelEncoder(Sensor):
         #       self.noise_wheel_data['vr'], self.noise_wheel_data['vl'])
         self.last_raw_robot_data = copy.deepcopy(
             self.current_raw_robot_data)
-        # self.robot_queue.put(
-        #     ["encoder", self.real_wheel_data, self.real_wheel_data])
+        self.robot_queue.put(
+            ["encoder", self.real_wheel_data, self.real_wheel_data])
 
 
 class OpticalFlow(Sensor):
@@ -722,23 +722,22 @@ class Datafusion2:
     state_variable_current = np.array(
         [0, 0, 0, 0, 0, 0])  # [xt,yt,vxt,vyt,theta_t,wt]
     state_variable_last = np.array(
-        [0, 0, 0, 0, 0, 0])  # [xt,yt,vt,theta_t,wt]
+        [0, 0, 0, 0, 0, 0])  # [xt,yt,vxt,vyt,theta_t,wt]
     ofs_state_variable_last = np.array(
-        [0, 0, 0, 0, 0, 0])  # [xt,yt,vt,theta_t,wt]
+        [0, 0, 0, 0, 0, 0])  # [xt,yt,vxt,vyt,theta_t,wt]
     state_variable_last_t = 0
     state_variable_predic = np.array(
-        [0, 0, 0, 0, 0, 0])  # [xt,yt,vt,theta_t,wt]
+        [0, 0, 0, 0, 0, 0])  # [xt,yt,vxt,vyt,theta_t,wt]
     last_imu_data = {"ax": 0, "ay": 0, "az": 0, "wx": 0,
                      "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
     last_optical_data = {"dx": 0, "dy": 0, "theta": 0, "t": 0}
     last_encoder_data = {"nr": 0, "nl": 0, "theta": 0, "t": 0}
     last_Pt = np.zeros(
         (state_variable_current.shape[0], state_variable_current.shape[0]))
-    Pt = np.zeros(
+    Pt = np.ones(
         (state_variable_current.shape[0], state_variable_current.shape[0]))
     b = distance_center_to_wheel
     r = wheel_radius
-    l = 0.10
     save_data_to_file = 0
     data_file_name_base = "data_fusion_sensor"
     file_num = 0
@@ -758,7 +757,8 @@ class Datafusion2:
                 self.file_num += 1
             else:
                 break
-        self.fid = open(data_file_name, 'a+')
+        print(data_file_name)
+        # self.fid = open(data_file_name, 'a+')
 
     def Predict(self, current_time):
         if(self.state_variable_last_t == 0):
@@ -768,6 +768,7 @@ class Datafusion2:
         if(dt == 0):
             return self.state_variable_current
         theta_t = self.state_variable_current[2]
+        # 匀速直线运动模型
         A = np.array([[1, 0, dt, 0, 0, 0],
                       [0, 1, 0, dt, 0, 0],
                       [0, 0, 1, 0, 0, 0],
@@ -855,7 +856,7 @@ class Datafusion2:
                          ddt-self.b*dtheta])
             error = sensor_data_array-Z
             print(f"error:{error},ddt{ddt}")
-        if(sensor_type == "encoder"):
+        if(sensor_type == "encoder0"):
             if(self.save_data_to_file):
                 # with open("data_fusion_sensor.dat", 'a+')as fid:
                 self.fid.write(
@@ -880,6 +881,31 @@ class Datafusion2:
                          ddt-self.b*dtheta])
             error = sensor_data_array-Z
             print(f"error:{error},ddt{ddt}")
+        if(sensor_type == "encoder"):
+            if(self.save_data_to_file):
+                with open("data_fusion_sensor.dat", 'a+')as fid:
+                    fid.write(
+                        f"encoder_data:{sensor_data['t']} {sensor_data['nl']} {sensor_data['nr']}\n")
+            if(self.last_encoder_data["t"] == 0):
+                self.last_encoder_data = copy.deepcopy(sensor_data)
+                return self.state_variable_current
+            dt = sensor_data["t"]-self.last_encoder_data["t"]
+            if(dt == 0):
+                return self.state_variable_current
+            dxt = self.state_variable_current[0]-self.state_variable_last[0]
+            dyt = self.state_variable_current[1]-self.state_variable_last[1]
+            ddt = np.float64(np.sqrt((dxt)**2 + (dyt)**2))
+            dtheta = self.state_variable_current[-1]*dt
+
+            H = np.array([[0, 0, 0, 0, 0, dt],
+                          [np.cos(dtheta/2+self.state_variable_last[-2]), np.sin(dtheta/2+self.state_variable_last[-2]), 0, 0, 0, 0]])
+            R = self.R_encoder
+            dr = sensor_data["nr"]
+            dl = sensor_data['nl']
+            sensor_data_array = np.array([(dr-dl)*0.5/self.b, (dr+dl)/2])
+            Z = np.array([dtheta, ddt])
+            error = sensor_data_array-Z
+            # print(f"error:{error},ddt{ddt}")
         elif(sensor_type == "optical"):
             if(self.save_data_to_file):
                 # with open("data_fusion_sensor.dat", 'a+')as fid:
