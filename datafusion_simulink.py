@@ -385,8 +385,9 @@ class Robot:
                             ['update_res', update_res[0], update_res[1]], block=False)
                 continue
             sensor_data = recv_queue.get()
-            if(sensor_data[0] == "imu" or sensor_data[0] == "encoder" or sensor_data[0] == "optical"):
-                data_fusion.merge_sensor_data(sensor_data[1], sensor_data[0])
+            if(sensor_data[0] == "encoder"):
+                data_fusion.merge_sensor_data(
+                    sensor_data[1], sensor_data[0], sensor_data[3])
 
     def RobotAlgo2(self, status, recv_queue, send_queue):
         print("algo2")
@@ -609,7 +610,7 @@ class ImuSensor(Sensor):
         ######
         self.last_raw_robot_data = copy.deepcopy(
             self.current_raw_robot_data)
-        self.robot_queue.put(["imu", self.real_imu_data, self.noise_imu_data])
+        # self.robot_queue.put(["imu", self.real_imu_data, self.noise_imu_data])
 
 
 class WheelEncoder(Sensor):
@@ -676,7 +677,7 @@ class WheelEncoder(Sensor):
         self.last_raw_robot_data = copy.deepcopy(
             self.current_raw_robot_data)
         self.robot_queue.put(
-            ["encoder", self.real_wheel_data, self.real_wheel_data])
+            ["encoder", self.real_wheel_data, self.real_wheel_data, [self.current_raw_robot_data["px"], self.current_raw_robot_data["py"], self.current_raw_robot_data["theta"]]])
 
 
 class OpticalFlow(Sensor):
@@ -759,10 +760,7 @@ class Datafusion3:
                      "wy": 0, "wz": 0, "t": 0}  # [ax,ay,az,wx,wy,wz,t]
     last_optical_data = {"dx": 0, "dy": 0, "theta": 0, "t": 0}
     last_encoder_data = {"nr": 0, "nl": 0, "theta": 0, "t": 0}
-    last_Pt = np.zeros(
-        (state_variable_current.shape[0], state_variable_current.shape[0]))
-    Pt = np.ones(
-        (state_variable_current.shape[0], state_variable_current.shape[0]))
+
     b = distance_center_to_wheel
     r = wheel_radius
     save_data_to_file = 0
@@ -773,6 +771,8 @@ class Datafusion3:
         self.sensor_data = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         self.Q = np.diag([0.1, 0.1, 0.1,
                          0.1, 0.1, 0.1, 0.1, 0.1])
+        self.last_Pt = self.Q
+        self.Pt = self.Q
         self.R_encoder = np.diag([0.001, 0.001])
         self.R_optcal = np.diag([0.0001, 0.0001])
         self.R_imu = np.diag([0.1, 0.1, 0.1])
@@ -811,22 +811,42 @@ class Datafusion3:
             self.state_variable_current[1]-self.state_variable_last[1])**2)
         dtheta = self.state_variable_current[2]-self.state_variable_last[2]
         theta = self.state_variable_current[2]
-        v = np.sqrt(
-            self.state_variable_current[3]**2+self.state_variable_current[4]**2)
+        vx = self.state_variable_current[3]
+        vy = self.state_variable_current[4]
+        v = np.sqrt(vx**2+vy**2)
         w = self.state_variable_current[-3]
         ax = self.state_variable_current[-2]
         ay = self.state_variable_current[-1]
-        H = np.array([[np.cos(0.5*dtheta)*np.cos(theta), np.cos(0.5*dtheta)*np.sin(theta), -0.5*dd*np.sin(0.5*dtheta), 0, 0, 0, 0, 0],
-                      [np.sin(0.5*dtheta)*np.cos(theta), np.sin(0.5*dtheta) *
-                       np.sin(theta), 0.5*dd*np.cos(0.5*dtheta), 0, 0, 0, 0, 0],
+        H = np.array([[0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0],
                       [0, 0, 0, np.cos(theta), np.sin(theta), 0, 0, 0],
                       [0, 0, 0, 0, 0, 1, 0, 0],
-                      [0, 0, 0, 0, 0, 1, 0, 0],
-                      [0, 0, -ax*np.sin(theta)+ay*np.cos(theta), 0, 0,
-                       0, np.cos(theta), np.sin(theta)],
-                      [0, 0, -ax*np.cos(theta)-ay*np.sin(theta), 0, 0, 0, -np.sin(theta), np.cos(theta)]])
-        Z = np.array([dd*np.cos(0.5*dtheta), dd*np.sin(0.5*dtheta), v, w, w,
-                     ax*np.cos(theta)+ay*np.sin(theta), ay*np.cos(theta)-ax*np.sin(theta)])
+                      [0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0]])
+        Z = np.array([0, 0, v, w, 0, 0, 0])
+
+        # H = np.array([[0, 0, 0, 0, 0, 0, 0, 0],
+        #               [0, 0, 0, 0, 0, 0, 0, 0],
+        #               [0, 0, vy*np.cos(theta)-vx*np.sin(theta),
+        #                np.cos(theta), np.sin(theta), 0, 0, 0],
+        #               [0, 0, 0, 0, 0, 1, 0, 0],
+        #               [0, 0, 0, 0, 0, 0, 0, 0],
+        #               [0, 0, 0, 0, 0, 0, 0, 0],
+        #               [0, 0, 0, 0, 0, 0, 0, 0]])
+        # Z = np.array([0, 0, np.cos(theta)*vx+np.sin(theta)*vy, w, 0, 0, 0])
+
+        # H = np.array([[np.cos(0.5*dtheta)*np.cos(theta), np.cos(0.5*dtheta)*np.sin(theta), -0.5*dd*np.sin(0.5*dtheta), 0, 0, 0, 0, 0],
+        #               [np.sin(0.5*dtheta)*np.cos(theta), np.sin(0.5*dtheta) *
+        #                np.sin(theta), 0.5*dd*np.cos(0.5*dtheta), 0, 0, 0, 0, 0],
+        #               [0, 0, 0, np.cos(theta), np.sin(theta), 0, 0, 0],
+        #               [0, 0, 0, 0, 0, 1, 0, 0],
+        #               [0, 0, 0, 0, 0, 1, 0, 0],
+        #               [0, 0, -ax*np.sin(theta)+ay*np.cos(theta), 0, 0,
+        #                0, np.cos(theta), np.sin(theta)],
+        #               [0, 0, -ax*np.cos(theta)-ay*np.sin(theta), 0, 0, 0, -np.sin(theta), np.cos(theta)]])
+        # Z = np.array([dd*np.cos(0.5*dtheta), dd*np.sin(0.5*dtheta), v, w, w,
+        #              ax*np.cos(theta)+ay*np.sin(theta), ay*np.cos(theta)-ax*np.sin(theta)])
         R = np.diag([0.01, 0.01, 0.001, 0.001, 0.01, 0.01, 0.01])
         error = np.array(self.sensor_data)-Z
         # print(error)
@@ -843,7 +863,7 @@ class Datafusion3:
         # self.sensor_data = [0, 0, 0, 0, 0, 0, 0]
         return self.state_variable_current
 
-    def merge_sensor_data(self, raw_sensor_data, sensor_type):
+    def merge_sensor_data(self, raw_sensor_data, sensor_type, real_pos=[0, 0, 0]):
         if(sensor_type == "imu"):
             self.sensor_data[-3] = raw_sensor_data["wz"]
             self.sensor_data[-2] = raw_sensor_data["ax"]
@@ -860,8 +880,10 @@ class Datafusion3:
             self.sensor_data[2] = (dr+dl)*0.5/dt
             self.last_encoder_data = copy.deepcopy(raw_sensor_data)
             if self.save_data_to_file:
+                real_pos_temp = [str(i) for i in real_pos]
+                real_pos_str = " ".join(real_pos_temp)
                 self.fid.write(
-                    f"encoder_data:{raw_sensor_data['t']} {raw_sensor_data['nl']} {raw_sensor_data['nr']}\n")
+                    f"encoder_data:{raw_sensor_data['t']} {raw_sensor_data['nl']} {raw_sensor_data['nr']}\n real_pos:{real_pos_str}\n")
             # print(f"dr:{dr},sensor_data:{self.sensor_data},raw:{raw_sensor_data}")
         if(sensor_type == "optical"):
             self.sensor_data[0] += raw_sensor_data["dx"]
